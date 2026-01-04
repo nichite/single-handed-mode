@@ -11,8 +11,10 @@ import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.kit.KitType;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.util.Text;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -156,6 +158,20 @@ public class SingleHandedModePlugin extends Plugin
 	@Subscribe
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
+
+		// 1. Check for Hook REMOVAL (The "Safety Lock")
+		// If we are trying to take the hook off, we must ensure hands are empty.
+		if (isHookRemovalInteraction(event))
+		{
+			if (isHoldingIllegalItem())
+			{
+				event.consume();
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+						"<col=ff0000>You cannot remove your hook while you're using it.", null);
+			}
+			return; // We handled the removal logic, no need to check equipping logic.
+		}
+
 		// 1. Filter: We only care about "Equip" or "Wield" or "Wear" options.
 		String option = event.getMenuOption();
 		// Using a set of standard equip strings to be robust
@@ -237,9 +253,8 @@ public class SingleHandedModePlugin extends Plugin
 
 			// Tell the user why
 			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
-					"<col=ff0000>You need a prosthetic hook to hold that!", null);
+					"<col=ff0000>You would need some sort of prosthetic hook to hold that.", null);
 		}
-		// Inside onMenuOptionClicked...
 
 		// Check for 2H Weapon
 		// Slot 3 is Weapon.
@@ -251,7 +266,7 @@ public class SingleHandedModePlugin extends Plugin
 			{
 				event.consume();
 				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
-						"<col=ff0000>You can't wield a two-handed weapon with one arm!", null);
+						"<col=ff0000>You can't wield a two-handed weapon with one hand!", null);
 			}
 		}
 	}
@@ -271,6 +286,68 @@ public class SingleHandedModePlugin extends Plugin
 			return stats.getEquipment().getSlot();
 		}
 		return -1;
+	}
+
+	private boolean isHookRemovalInteraction(MenuOptionClicked event)
+	{
+		// 1. The Source of Truth
+		// If we aren't wearing the hook, we logically cannot be removing it.
+		if (!this.isPiratesHookEquipped) return false;
+
+		String option = event.getMenuOption();
+
+		// Case A: The "Remove" Button (Equipment Tab)
+		// We strictly check the Name to distinguish "Removing Hook" from "Removing Boots"
+		if (option.equalsIgnoreCase("Remove"))
+		{
+			String target = Text.removeTags(event.getMenuTarget());
+			return target.equals("Pirate's hook");
+		}
+
+		// Case B: The "Swap" Action (Inventory)
+		// Here we DO verify the slot directly, because we have the Item ID!
+		if (option.equalsIgnoreCase("Wear")
+				|| option.equalsIgnoreCase("Wield")
+				|| option.equalsIgnoreCase("Equip"))
+		{
+			int newItemId = event.getItemId();
+			if (newItemId > -1)
+			{
+				// If I am wearing the hook, and I try to put on something else
+				// that goes in the glove slot, I am implicitly removing the hook.
+				return getEquipmentSlot(newItemId) == EquipmentInventorySlot.GLOVES.getSlotIdx();
+			}
+		}
+
+		return false;
+	}
+
+	// Helper: Check if we are holding a Shield or 2H Weapon
+	private boolean isHoldingIllegalItem()
+	{
+		ItemContainer equipment = client.getItemContainer(InventoryID.EQUIPMENT); // ID 94
+		if (equipment == null) return false;
+
+		// Check Slot 5 (Shield)
+		if (equipment.getItem(EquipmentInventorySlot.SHIELD.getSlotIdx()) != null)
+		{
+			return true;
+		}
+
+		// Check Slot 3 (Weapon) for 2H
+		// We need to check if the CURRENT weapon is 2-Handed
+		// (You can omit this if you trust yourself, but for completeness:)
+		var weaponItem = equipment.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx());
+		if (weaponItem != null)
+		{
+			var stats = itemManager.getItemStats(weaponItem.getId(), false);
+			if (stats != null && stats.getEquipment().isTwoHanded())
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	@Provides
