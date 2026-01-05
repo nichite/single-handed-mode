@@ -6,10 +6,8 @@ import javax.inject.Inject;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.*;
+import net.runelite.api.events.*;
 import net.runelite.api.gameval.ItemID;
-import net.runelite.api.events.ClientTick;
-import net.runelite.api.events.GameStateChanged;
-import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.kit.KitType;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
@@ -19,7 +17,6 @@ import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
-import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ChatMessageType;
@@ -28,7 +25,7 @@ import java.util.Set;
 
 @Slf4j
 @PluginDescriptor(
-	name = "SingleHandedMode"
+	name = "Single-Handed Mode"
 )
 public class SingleHandedModePlugin extends Plugin
 {
@@ -57,6 +54,10 @@ public class SingleHandedModePlugin extends Plugin
 	@Getter
     private boolean isPiratesHookEquipped = false;
 
+	// Transient flags to allow 1-tick actions
+	private int lastShieldRemovalTick = -1;
+	private int lastHookEquipTick = -1;
+
     @Override
 	protected void startUp() throws Exception
 	{
@@ -64,16 +65,16 @@ public class SingleHandedModePlugin extends Plugin
 		// Initial check in case we are already logged in wearing the hook
 		// Schedule this to run on the next game tick (Client Thread)
 		// since we can't make this check on the startup thread.
-		clientThread.invokeLater(() ->
-		{
-			ItemContainer equipment = client.getItemContainer(InventoryID.EQUIPMENT);
-			if (equipment != null) {
-				this.isPiratesHookEquipped = equipment.contains(ItemID.PIRATEHOOK);
-				if (this.isPiratesHookEquipped) {
-					log.debug("Logging in with pirate's hook equipped!");
-				}
-			}
-		});
+//		clientThread.invokeLater(() ->
+//		{
+//			ItemContainer equipment = client.getItemContainer(InventoryID.EQUIPMENT);
+//			if (equipment != null) {
+//				this.isPiratesHookEquipped = equipment.contains(ItemID.PIRATEHOOK);
+//				if (this.isPiratesHookEquipped) {
+//					log.debug("Logging in with pirate's hook equipped!");
+//				}
+//			}
+//		});
 	}
 
 	@Override
@@ -159,11 +160,32 @@ public class SingleHandedModePlugin extends Plugin
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
 
+		// --- PHASE 1: PRE-CALCULATE INTENT ---
+		// Before blocking anything, let's see if this click is a "Good Action"
+		// that should enable future clicks in this same tick.
+		int currentTick = client.getTickCount();
+
+		// Check if this click is REMOVING a Shield/2H
+		if (isShieldRemovalInteraction(event))
+		{
+			log.debug("Pending shield removal");
+			lastShieldRemovalTick = currentTick;
+			// We don't return; we still let the event process naturally
+		}
+
+		// Check if this click is EQUIPPING the Hook
+		if (isHookEquipInteraction(event))
+		{
+			log.debug("Pending hook equip");
+			lastHookEquipTick = currentTick;
+		}
+
 		// 1. Check for Hook REMOVAL (The "Safety Lock")
 		// If we are trying to take the hook off, we must ensure hands are empty.
 		if (isHookRemovalInteraction(event))
 		{
-			if (isHoldingIllegalItem())
+			boolean recentlyRemovedShield = currentTick == lastShieldRemovalTick;
+			if (isHoldingIllegalItem() && !recentlyRemovedShield)
 			{
 				event.consume();
 				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
@@ -184,7 +206,8 @@ public class SingleHandedModePlugin extends Plugin
 		}
 
 		// 2. Permission Check: If the Hook is equipped, you are allowed to use offhands!
-		if (this.isPiratesHookEquipped)
+		boolean recentlyEquippedHook = currentTick == lastHookEquipTick;
+		if (this.isPiratesHookEquipped || recentlyEquippedHook)
 		{
 			return;
 		}
@@ -319,6 +342,75 @@ public class SingleHandedModePlugin extends Plugin
 			}
 		}
 
+		return false;
+	}
+
+	// Helper: Is this click going to remove the shield?
+	private boolean isShieldRemovalInteraction(MenuOptionClicked event)
+	{
+		String option = event.getMenuOption();
+		int itemId = event.getItemId();
+
+		// 1. Direct "Remove" on Shield Slot
+		if (option.equalsIgnoreCase("Remove"))
+		{
+			// Using the Text Check method since Widget IDs are flaky
+			String target = Text.removeTags(event.getMenuTarget());
+			// We need to know if the target name corresponds to the item in the shield slot.
+			// This is tricky. A simpler way is checking the slot index if possible,
+			// OR checking if the item in Slot 5 matches the text.
+
+			// Let's use the Widget Check again, but safer:
+			Widget widget = client.getWidget(event.getParam1());
+			if (widget != null)
+			{
+				// If we clicked the Shield Slot (Child 38 in Group 387 usually, or index 5)
+				// We can check if the widget IS the shield slot.
+				// But simpler: Check if the text matches the currently equipped shield.
+				ItemContainer equipment = client.getItemContainer(InventoryID.EQUIPMENT);
+				if (equipment != null)
+				{
+					var shield = equipment.getItem(EquipmentInventorySlot.SHIELD.getSlotIdx());
+					var weapon = equipment.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx());
+
+					// Check Shield Slot
+					if (shield != null)
+					{
+						String shieldName = itemManager.getItemComposition(shield.getId()).getName();
+						if (target.equals(shieldName)) return true;
+					}
+
+					// Check 2H Weapon (Unequipping a 2H counts as freeing the offhand)
+					if (weapon != null)
+					{
+						var stats = itemManager.getItemStats(weapon.getId(), false);
+						if (stats != null && stats.getEquipment().isTwoHanded())
+						{
+							String weaponName = itemManager.getItemComposition(weapon.getId()).getName();
+							if (target.equals(weaponName)) return true;
+						}
+					}
+				}
+			}
+		}
+
+		// 2. Unequipping by Swapping (Equipping a 1-handed weapon to replace a 2H)
+		// This frees up the "Offhand" slot technically?
+		// No, usually equipping a main-hand keeps the offhand empty.
+		// But equipping a SHIELD removes a 2H.
+		// This logic gets complex. For now, let's stick to EXPLICIT removal.
+
+		return false;
+	}
+
+	// Helper: Is this click equipping the hook?
+	private boolean isHookEquipInteraction(MenuOptionClicked event)
+	{
+		String option = event.getMenuOption();
+		if (option.equalsIgnoreCase("Wear") || option.equalsIgnoreCase("Wield") || option.equalsIgnoreCase("Equip"))
+		{
+			return event.getItemId() == ItemID.PIRATEHOOK;
+		}
 		return false;
 	}
 
