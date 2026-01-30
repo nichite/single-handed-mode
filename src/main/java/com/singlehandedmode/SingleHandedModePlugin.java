@@ -1,5 +1,6 @@
 package com.singlehandedmode;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.inject.Provides;
 import javax.inject.Inject;
 
@@ -21,6 +22,9 @@ import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ChatMessageType;
 import net.runelite.client.game.ItemManager;
+
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Slf4j
@@ -30,6 +34,39 @@ import java.util.Set;
 public class SingleHandedModePlugin extends Plugin
 {
 	private static final int PIRATE_HOOK_EQUIPMENT_ID = 5045;
+
+	private static final Map<String, List<String>> optionToTargetSubstringList = Map.of(
+			// Any rock ("iron rocks", "coal rocks" as well as "rockfall")
+			// veins e.g. in MLM
+			// rune or daeyalt erssence
+			"mine", List.of("rock","ore vein", "essence"),
+			"climb", List.of("rocks")
+	);
+
+	private static final Set<Integer> BANNED_TWO_HANDED_TOOLS = ImmutableSet.of(
+			// Fletching / Crafting
+			ItemID.KNIFE,
+			ItemID.CHISEL,
+			ItemID.NEEDLE,
+			ItemID.GLASSBLOWINGPIPE,
+			ItemID.BALL_OF_WOOL, // Spinning requires two hands feeding the wheel
+
+			// Firemaking
+			ItemID.TINDERBOX,
+
+			// Farming (Heavy Tools)
+			ItemID.SPADE,
+			ItemID.RAKE,
+			ItemID.DIBBER,
+			ItemID.GARDENING_TROWEL,
+
+			// Herblore
+			ItemID.PESTLE_AND_MORTAR, // Grinding requires holding the bowl + grinding
+
+			// Smithing / Construction
+			ItemID.HAMMER, // Often requires holding the nail/object with offhand
+			ItemID.POH_SAW    // Sawing is a 2H motion
+	);
 
 	@Inject
 	private Client client;
@@ -160,6 +197,7 @@ public class SingleHandedModePlugin extends Plugin
 	public void onMenuOptionClicked(MenuOptionClicked event)
 	{
 
+		log.debug("Menu option clicked!");
 		// --- PHASE 1: PRE-CALCULATE INTENT ---
 		// Before blocking anything, let's see if this click is a "Good Action"
 		// that should enable future clicks in this same tick.
@@ -195,19 +233,28 @@ public class SingleHandedModePlugin extends Plugin
 		}
 
 		// 1. Filter: We only care about "Equip" or "Wield" or "Wear" options.
-		String option = event.getMenuOption();
+		String option = Text.removeTags(event.getMenuOption()).toLowerCase();
+		String target = Text.removeTags(event.getMenuTarget()).toLowerCase();
+
+		// 2. Permission Check: If the Hook is equipped, you are allowed to use offhands!
+		boolean recentlyEquippedHook = currentTick == lastHookEquipTick;
+		if (this.isPiratesHookEquipped || recentlyEquippedHook)
+		{
+			return;
+		}
+
+		if (isTwoHandedAction(event) || isTwoHandedUsage(event)) {
+			event.consume();
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+					"<col=ff0000>You need two hands to do that properly!", null);
+			return;
+		}
+
 		// Using a set of standard equip strings to be robust
 		if (!option.equalsIgnoreCase("Wield")
 				&& !option.equalsIgnoreCase("Wear")
 				&& !option.equalsIgnoreCase("Equip")
 				&& !option.equalsIgnoreCase("Hold"))
-		{
-			return;
-		}
-
-		// 2. Permission Check: If the Hook is equipped, you are allowed to use offhands!
-		boolean recentlyEquippedHook = currentTick == lastHookEquipTick;
-		if (this.isPiratesHookEquipped || recentlyEquippedHook)
 		{
 			return;
 		}
@@ -292,6 +339,128 @@ public class SingleHandedModePlugin extends Plugin
 						"<col=ff0000>You can't wield a two-handed weapon with one hand!", null);
 			}
 		}
+	}
+
+	/**
+	 * Determines if an interaction requires two hands based on the verb or target.
+	 */
+	private boolean isTwoHandedAction(MenuOptionClicked event)
+	{
+		String option = Text.removeTags(event.getMenuOption()).toLowerCase();
+		String target = Text.removeTags(event.getMenuTarget()).toLowerCase();
+		log.debug("isTwoHandedAction. Option: " + option + ", target: " + target);
+
+		// --- MINING ---
+		// Block "Mine" on anything (Rocks, Veins, Essence)
+        switch (option) {
+            case "mine":
+                return true;
+            // --- SMITHING ---
+            // Block "Smith" (Anvils)
+            case "smith":
+                return true;
+            // --- FISHING ---
+            // Block "Lure", "Bait", "Net".
+            // Allow "Harpoon", "Cage" (maybe?), "Small Net" (up to you)
+            case "lure":
+            case "bait":
+			case "net":
+                return true;
+            // --- FARMING ---
+            // Block "Rake" and "Harvest" (if digging is involved)
+            case "rake":
+                return true;
+        }
+
+        // --- AGILITY (Specific Obstacles) ---
+		// This is tricky because "Climb" is used for both 1H ladders and 2H walls.
+		// We target specific object names or specific verbs.
+
+		// Block Monkey Bars
+		if (option.contains("swing-across") && target.contains("monkey bars"))
+		{
+			return true;
+		}
+
+		// Block Ropes (Swing)
+		if (option.contains("swing") && target.contains("rope"))
+		{
+			return true;
+		}
+		// Rope swing or ropeswing
+		if (option.contains("swing-on") && target.contains("rope")) {
+			return true;
+		}
+		// Ladders are allowed
+		if (option.contains("climb") && !target.contains("ladder") && !target.contains("crumbling wall")) {
+			return true;
+		}
+
+		if (option.contains("climb-across") && target.contains("hand holds")) {
+			return true;
+		}
+
+		// Waterfall quest
+		if (option.contains("use") && target.contains("rope -> rock")) {
+			log.debug("Doing waterfall!");
+			return true;
+		}
+
+		return false;
+	}
+
+	private boolean isTwoHandedUsage(MenuOptionClicked event)
+	{
+		log.debug("isTwoHandedUsage");
+		MenuAction action = event.getMenuAction();
+
+		// Case 1: Using an Item on another Item (Inventory -> Inventory)
+		// Case 2: Using an Item on a Game Object (Inventory -> World)
+		// Case 3: Using an Item on a Ground Item (Inventory -> Floor)
+		if (action == MenuAction.WIDGET_TARGET_ON_WIDGET ||
+				action == MenuAction.WIDGET_TARGET_ON_GAME_OBJECT ||
+				action == MenuAction.WIDGET_TARGET_ON_GROUND_ITEM)
+		{
+			// 1. Identify the item we "Selected" first (The cursor is holding it)
+			int selectedItemId = -1;
+			if (client.getSelectedWidget() != null)
+			{
+				selectedItemId = client.getSelectedWidget().getItemId();
+			}
+
+			// 2. Identify the item we are clicking "Target" on right now
+			// For WIDGET_TARGET_ON_WIDGET, event.getItemId() is the target.
+			// For Objects, we don't care about the object ID, only the tool we are holding.
+			int targetItemId = event.getItemId();
+
+			log.debug("selected item id: " + selectedItemId + " target item id: " + targetItemId);
+
+			// 3. CHECK: Is the "Active Tool" (Selected Item) banned?
+			if (BANNED_TWO_HANDED_TOOLS.contains(selectedItemId))
+			{
+				return true;
+			}
+
+			// 4. CHECK REVERSE: Did we click the Tool *onto* the Material?
+			// (Only matters for Item-on-Item. e.g. clicking Log then Knife)
+			if (action == MenuAction.WIDGET_TARGET_ON_WIDGET && BANNED_TWO_HANDED_TOOLS.contains(targetItemId))
+			{
+				return true;
+			}
+		}
+
+		// Special Case: "Use" - Selecting the tool initially
+		// Optional: You can block the initial "Use" click on the tool itself if you want strictness.
+		// However, allowing the selection but blocking the *result* is usually better UX.
+		// If you want to block even selecting the tool:
+    /*
+    if (action == MenuAction.CC_OP && event.getMenuOption().equalsIgnoreCase("Use"))
+    {
+        if (BANNED_TWO_HANDED_TOOLS.contains(event.getItemId())) return true;
+    }
+    */
+
+		return false;
 	}
 
 	// Helper method to find slot
