@@ -10,6 +10,7 @@ import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -22,6 +23,9 @@ public class SingleHandedModePlugin extends Plugin
 {
     @Inject
     private Client client;
+
+    @Inject
+    private SingleHandedModeConfig config;
 
     @Inject
     private OverlayManager overlayManager;
@@ -48,7 +52,7 @@ public class SingleHandedModePlugin extends Plugin
     @Override
     protected void startUp() throws Exception
     {
-        overlayManager.add(shieldOverlay);
+        updateOverlayState();
     }
 
     @Override
@@ -56,6 +60,35 @@ public class SingleHandedModePlugin extends Plugin
     {
         overlayManager.remove(shieldOverlay);
         // Note: Hands will naturally restore on next game animation/tick if we stop forcing them to 0
+    }
+
+    @Subscribe
+    public void onConfigChanged(ConfigChanged event)
+    {
+        // filter by our group "singlehandedmode"
+        if (!event.getGroup().equals("singlehandedmode")) return;
+
+        // Check if the specific key for shields changed
+        if (event.getKey().equals("disableShieldsNoHook"))
+        {
+            updateOverlayState();
+        }
+    }
+
+    /**
+     * Adds or removes the overlay based on the current config state.
+     */
+    private void updateOverlayState()
+    {
+        // Safe Pattern: Remove it first to ensure we don't duplicate it.
+        // OverlayManager.remove() is safe to call even if it's not currently added.
+        overlayManager.remove(shieldOverlay);
+
+        // Only add it back if the restriction is enabled
+        if (config.disableShieldsNoHook())
+        {
+            overlayManager.add(shieldOverlay);
+        }
     }
 
     @Subscribe

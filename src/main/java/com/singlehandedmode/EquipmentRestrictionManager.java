@@ -20,6 +20,7 @@ public class EquipmentRestrictionManager
     private final Client client;
     private final ItemManager itemManager;
     private final HookStateManager hookState;
+    private final SingleHandedModeConfig config;
 
     private static final Set<String> BANNED_OFFHAND_KEYWORDS = ImmutableSet.of(
             "defender", "book", "torch", "lantern", "hammer", "orb", "chalice", "skull", "head", "tankard", "cane"
@@ -30,22 +31,17 @@ public class EquipmentRestrictionManager
     );
 
     @Inject
-    public EquipmentRestrictionManager(Client client, ItemManager itemManager, HookStateManager hookState)
+    public EquipmentRestrictionManager(Client client, ItemManager itemManager, HookStateManager hookState, SingleHandedModeConfig config)
     {
         this.client = client;
         this.itemManager = itemManager;
         this.hookState = hookState;
+        this.config = config;
     }
 
-    /**
-     * Checks if an interaction is an attempt to equip an illegal item.
-     * Consumes the event and notifies player if illegal.
-     */
     public void checkRestrictions(MenuOptionClicked event)
     {
         String option = Text.removeTags(event.getMenuOption()).toLowerCase();
-
-        // Filter for Equip Actions
         if (!option.equals("wield") && !option.equals("wear") && !option.equals("equip") && !option.equals("hold"))
         {
             return;
@@ -57,49 +53,109 @@ public class EquipmentRestrictionManager
         int equipmentSlot = getEquipmentSlot(itemId);
         if (equipmentSlot == -1) return;
 
-        // --- SCENARIO 1: HOOK EQUIPPED ---
-        if (hookState.isPiratesHookEquipped() || hookState.wasHookJustEquipped())
+        boolean isHookEquipped = hookState.isPiratesHookEquipped() || hookState.wasHookJustEquipped();
+
+        if (isHookEquipped)
         {
-            if (equipmentSlot == EquipmentInventorySlot.SHIELD.getSlotIdx())
-            {
-                if (nameContainsKeyword(itemId, BANNED_OFFHAND_KEYWORDS))
-                {
-                    blockEvent(event, "You cannot grip that item with a hook (no fingers!).");
-                }
-            }
-            else if (equipmentSlot == EquipmentInventorySlot.WEAPON.getSlotIdx())
-            {
-                if (nameContainsKeyword(itemId, DUAL_WIELD_KEYWORDS))
-                {
-                    blockEvent(event, "You can't dual-wield weapons with a hook!");
-                }
-            }
+            checkHookEquippedRestrictions(event, itemId, equipmentSlot);
         }
-        // --- SCENARIO 2: NO HOOK ---
         else
         {
-            // Block ALL Offhands/Shields
-            if (equipmentSlot == EquipmentInventorySlot.SHIELD.getSlotIdx())
+            checkNoHookRestrictions(event, itemId, equipmentSlot);
+        }
+    }
+
+    private void checkNoHookRestrictions(MenuOptionClicked event, int itemId, int slot)
+    {
+        // 1. Disable Shield Slot
+        if (config.disableShieldsNoHook() && slot == EquipmentInventorySlot.SHIELD.getSlotIdx())
+        {
+            blockEvent(event, "You need a prosthetic to hold an offhand item.");
+            return;
+        }
+
+        // 2. Disable 2H Weapons
+        if (config.disable2HWeaponsNoHook() && slot == EquipmentInventorySlot.WEAPON.getSlotIdx())
+        {
+            if (isTwoHanded(itemId))
             {
-                blockEvent(event, "You would need some sort of prosthetic hook to hold that.");
-            }
-            // Block 2H Weapons
-            else if (equipmentSlot == EquipmentInventorySlot.WEAPON.getSlotIdx())
-            {
-                var stats = itemManager.getItemStats(itemId, false);
-                if (stats != null && stats.getEquipment() != null && stats.getEquipment().isTwoHanded())
-                {
-                    blockEvent(event, "You can't wield a two-handed weapon with one hand!");
-                }
+                blockEvent(event, "You can't wield a two-handed weapon with one hand!");
             }
         }
     }
 
-    /**
-     * Safety Lock: Checks if player is trying to remove the hook while holding illegal items.
-     */
-    public void checkHookRemoval(MenuOptionClicked event)
+    private void checkHookEquippedRestrictions(MenuOptionClicked event, int itemId, int slot)
     {
+        // 1. Disable Gripped Offhands
+        if (config.disableGrippedOffhands() && slot == EquipmentInventorySlot.SHIELD.getSlotIdx())
+        {
+            if (nameContainsKeyword(itemId, BANNED_OFFHAND_KEYWORDS))
+            {
+                blockEvent(event, "You cannot grip that item with a hook (no fingers!).");
+            }
+        }
+
+        // 2. Disable Dual Wielding
+        if (config.disableDualWielding() && slot == EquipmentInventorySlot.WEAPON.getSlotIdx())
+        {
+            if (nameContainsKeyword(itemId, DUAL_WIELD_KEYWORDS))
+            {
+                blockEvent(event, "You can't dual-wield weapons with a hook!");
+            }
+        }
+
+        // 3. Disable Bows (String drawing requires fingers)
+        if (config.disableBows() && slot == EquipmentInventorySlot.WEAPON.getSlotIdx())
+        {
+            String name = itemManager.getItemComposition(itemId).getName().toLowerCase();
+            // Allow Crossbows, Ballistas, etc. Ban standard bows.
+            boolean isBow = name.contains("bow") && !name.contains("crossbow") && !name.contains("ballista") && !name.contains("crystal bow");
+            // Crystal bow is technically magic? Up to you.
+            // Standard "Shortbow", "Longbow", "Composite Bow", "Seercull", "Twisted Bow".
+
+            if (isBow)
+            {
+                blockEvent(event, "You cannot draw a bowstring with a hook.");
+            }
+        }
+    }
+
+    // ... (Helpers: checkHookRemoval, isHookRemovalInteraction, isHoldingIllegalItem, blockEvent, getEquipmentSlot, nameContainsKeyword remain same) ...
+    // Note: I omitted repeating them to save space, but ensure 'isTwoHanded' helper is present:
+
+    private boolean isTwoHanded(int itemId)
+    {
+        var stats = itemManager.getItemStats(itemId, false);
+        return stats != null && stats.getEquipment() != null && stats.getEquipment().isTwoHanded();
+    }
+
+    // ... existing helpers ...
+
+    private void blockEvent(MenuOptionClicked event, String message)
+    {
+        event.consume();
+        client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff0000>" + message, null);
+    }
+
+    private int getEquipmentSlot(int itemId)
+    {
+        var stats = itemManager.getItemStats(itemId, false);
+        return (stats != null && stats.getEquipment() != null) ? stats.getEquipment().getSlot() : -1;
+    }
+
+    private boolean nameContainsKeyword(int itemId, Set<String> keywords)
+    {
+        ItemComposition def = itemManager.getItemComposition(itemId);
+        if (def == null) return false;
+        String name = def.getName().toLowerCase();
+
+        // Exception for Shields in banned list
+        if (keywords == BANNED_OFFHAND_KEYWORDS && name.contains("shield")) return false;
+
+        return keywords.stream().anyMatch(name::contains);
+    }
+
+    public void checkHookRemoval(MenuOptionClicked event) {
         if (!hookState.isPiratesHookEquipped()) return;
 
         if (isHookRemovalInteraction(event))
@@ -110,8 +166,6 @@ public class EquipmentRestrictionManager
             }
         }
     }
-
-    // --- Helpers ---
 
     private boolean isHookRemovalInteraction(MenuOptionClicked event)
     {
@@ -142,29 +196,5 @@ public class EquipmentRestrictionManager
             return stats != null && stats.getEquipment().isTwoHanded();
         }
         return false;
-    }
-
-    private void blockEvent(MenuOptionClicked event, String message)
-    {
-        event.consume();
-        client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff0000>" + message, null);
-    }
-
-    private int getEquipmentSlot(int itemId)
-    {
-        var stats = itemManager.getItemStats(itemId, false);
-        return (stats != null && stats.getEquipment() != null) ? stats.getEquipment().getSlot() : -1;
-    }
-
-    private boolean nameContainsKeyword(int itemId, Set<String> keywords)
-    {
-        ItemComposition def = itemManager.getItemComposition(itemId);
-        if (def == null) return false;
-        String name = def.getName().toLowerCase();
-
-        // Exception for Shields in banned list
-        if (keywords == BANNED_OFFHAND_KEYWORDS && name.contains("shield")) return false;
-
-        return keywords.stream().anyMatch(name::contains);
     }
 }
