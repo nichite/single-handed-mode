@@ -24,14 +24,14 @@ public class ShieldRestrictionOverlay extends Overlay // <--- Change this
     private static final int SHIELD_SLOT_COMPONENT_ID = 25362452;
 
     private final Client client;
-    private final SingleHandedModePlugin plugin;
+    private final HookStateManager hookStateManager;
     private final ItemManager itemManager;
 
     @Inject
-    public ShieldRestrictionOverlay(Client client, SingleHandedModePlugin plugin, ItemManager itemManager)
+    public ShieldRestrictionOverlay(Client client, HookStateManager hookStateManager, ItemManager itemManager)
     {
         this.client = client;
-        this.plugin = plugin;
+        this.hookStateManager = hookStateManager;
         this.itemManager = itemManager;
 
         // Set up the overlay rules
@@ -42,7 +42,7 @@ public class ShieldRestrictionOverlay extends Overlay // <--- Change this
     @Override
     public Dimension render(Graphics2D graphics)
     {
-        if (plugin.isPiratesHookEquipped())
+        if (hookStateManager.isPiratesHookEquipped())
         {
             return null;
         }
