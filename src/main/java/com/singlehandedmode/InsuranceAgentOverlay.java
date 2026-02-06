@@ -31,21 +31,30 @@ public class InsuranceAgentOverlay extends Overlay
     @Override
     public Dimension render(Graphics2D graphics)
     {
-        RuneLiteObject agent = agentManager.getAgent();
+        // 1. Get the Wrapper
+        InsuranceAgent agentWrapper = agentManager.getAgent();
+
+        // 2. Get the Text
         String text = agentManager.getOverheadText();
 
         // Safety Checks
-        if (agent == null || !agent.isActive() || text == null)
+        // We must check if the wrapper exists, AND if the underlying RLO exists/is active
+        if (agentWrapper == null || text == null)
         {
             return null;
         }
 
-        // 1. Get Location
-        LocalPoint lp = agent.getLocation();
+        RuneLiteObject rlo = agentWrapper.getRlo();
+        if (rlo == null || !rlo.isActive())
+        {
+            return null;
+        }
+
+        // 3. Get Location from the RLO (Visual Location)
+        LocalPoint lp = rlo.getLocation();
         if (lp == null) return null;
 
-        // 2. Calculate Text Position
-        // We add a Z-offset (Height) to make it float above his head.
+        // 4. Calculate Text Position
         // A standard human NPC is about 180-200 units tall.
         // We add ~40 extra units for the text float height.
         int zOffset = 240;
@@ -54,11 +63,8 @@ public class InsuranceAgentOverlay extends Overlay
 
         if (textLocation != null)
         {
-            // 3. Draw the Text
-            // Standard OSRS overhead color is Yellow (Color.YELLOW).
-            // You can use a custom font if you want, but default looks "native".
-
             // Optional: Font styling to match OSRS overheads better
+            // Standard OSRS overhead font is usually 12 or 16 bold.
             graphics.setFont(new Font("RuneScape", Font.BOLD, 16));
 
             OverlayUtil.renderTextLocation(graphics, textLocation, text, Color.YELLOW);
