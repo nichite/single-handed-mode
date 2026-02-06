@@ -251,13 +251,13 @@ public interface SingleHandedModeConfig extends Config
 	String sectionEconomy = "sectionEconomy";
 
 	@ConfigItem(
-			keyName = "hookDurabilityHours",
-			name = "Durability (Hours)",
-			description = "How many hours the hook lasts before breaking.",
+			keyName = "hookDurabilityTicks",
+			name = "Durability (Ticks)",
+			description = "How many Ticks the hook lasts before breaking.",
 			position = 51,
 			section = sectionEconomy
 	)
-	default int hookDurabilityHours() { return 10; }
+	default int hookDurabilityTicks() { return 60000; }
 
 	@ConfigItem(
 			keyName = "repairCost",

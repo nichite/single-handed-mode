@@ -36,8 +36,7 @@ public class DurabilityManager
         log.debug("Initial state: wearTicks = {}", wearTicks);
         this.wearTicks = config.currentWearTicks();
         this.penaltyDebt = config.accumulatedDebt();
-        int maxTicks = config.hookDurabilityHours() * 6000; // 6000 ticks per hour
-        this.isBroken = wearTicks > maxTicks;
+        this.isBroken = wearTicks > config.hookDurabilityTicks();
     }
 
     public void onGameTick()
@@ -49,7 +48,7 @@ public class DurabilityManager
             // NORMAL WEAR
             ++wearTicks;
             checkBrokenState();
-            log.debug("Wear ticks: {}", wearTicks);
+//            log.debug("Wear ticks: {}", wearTicks);
             if (wearTicks % TICKS_PER_SAVE == 0)
             {
                 saveProgress();
@@ -68,7 +67,7 @@ public class DurabilityManager
             // Or simpler: Config is "GP Per Tick" internally?
             // Let's assume Config is "GP Per Second".
             // 1 Tick = 0.6 seconds. So add (0.6 * GP_PER_SEC).
-
+            ++wearTicks;
             double increase = config.penaltyPerSecond() * 0.6;
             penaltyDebt += (int) Math.ceil(increase);
 
@@ -79,9 +78,9 @@ public class DurabilityManager
                 saveProgress();
             }
         } else if (!isBroken) {
-            log.debug("Not broken but not equipped. Wear ticks: {}", wearTicks);
+//            log.debug("Not broken but not equipped. Wear ticks: {}", wearTicks);
         } else {
-            log.debug("Broken and not equipped. Wear ticks: {}", wearTicks);
+//            log.debug("Broken and not equipped. Wear ticks: {}", wearTicks);
         }
 
     }
@@ -93,15 +92,14 @@ public class DurabilityManager
 
     public int getTotalRepairCost()
     {
-        return config.repairCost() + penaltyDebt;
+        return penaltyDebt;
     }
 
     public boolean hasUnpaidDebt() {
-        return isBroken && wearTicks > 0;
+        return penaltyDebt > 0;
     }
 
     public void settleDebt() {
-        wearTicks = 0;
         penaltyDebt = 0;
         saveProgress();
         client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
@@ -110,6 +108,7 @@ public class DurabilityManager
 
     public void repairHook()
     {
+        wearTicks = 0;
         isBroken = false;
         saveProgress();
         client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
@@ -118,9 +117,7 @@ public class DurabilityManager
 
     private void checkBrokenState()
     {
-        int maxTicks = config.hookDurabilityHours() * 6000; // 6000 ticks per hour
-        boolean newBrokenState = wearTicks >= maxTicks;
-
+        boolean newBrokenState = wearTicks >= config.hookDurabilityTicks();;
         if (newBrokenState && !isBroken)
         {
             // Just broke this tick
@@ -128,6 +125,9 @@ public class DurabilityManager
                     "<col=ff0000>Your pirate's hook has broken!", null);
             client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
                     "<col=ff0000>You must pay your insurance deductible (Drop " + config.repairCost() + " gp) to fix it.", null);
+
+            penaltyDebt += config.repairCost();
+            saveProgress();
         }
 
         isBroken = newBrokenState;

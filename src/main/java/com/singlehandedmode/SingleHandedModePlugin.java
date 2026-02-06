@@ -42,6 +42,9 @@ public class SingleHandedModePlugin extends Plugin
     private EquipmentRestrictionManager equipmentManager;
 
     @Inject
+    private InsuranceAgentManager insuranceAgentManager;
+
+    @Inject
     private InteractionRestrictionManager interactionManager;
 
     @Inject
@@ -74,6 +77,7 @@ public class SingleHandedModePlugin extends Plugin
         overlayManager.add(insuranceAgentOverlay);
         updateOverlayState();
         eventBus.register(doctorInteractionManager);
+        eventBus.register(insuranceAgentManager);
     }
 
     @Override
@@ -83,6 +87,7 @@ public class SingleHandedModePlugin extends Plugin
         overlayManager.remove(brokenHookOverlay);
         overlayManager.remove(insuranceAgentOverlay);
         eventBus.unregister(doctorInteractionManager);
+        eventBus.unregister(insuranceAgentManager);
     }
 
     @Subscribe

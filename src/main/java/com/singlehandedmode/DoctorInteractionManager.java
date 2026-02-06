@@ -9,22 +9,18 @@ import net.runelite.client.eventbus.Subscribe;
 
 public class DoctorInteractionManager
 {
-    private final Client client;
-    private final DurabilityManager durabilityManager;
-    private final SingleHandedModeConfig config;
-
     @Inject
-    public DoctorInteractionManager(Client client, DurabilityManager durabilityManager, SingleHandedModeConfig config)
-    {
-        this.client = client;
-        this.durabilityManager = durabilityManager;
-        this.config = config;
-    }
+    private Client client;
+    @Inject
+    private DurabilityManager durabilityManager;
+    @Inject
+    private SingleHandedModeConfig config;
+    @Inject
+    private FakeDialogueManager dialogueManager;
 
     @Subscribe
     public void onMenuEntryAdded(MenuEntryAdded event)
     {
-        // 1. Only modify menu if we are actually ready for surgery
         if (!durabilityManager.isHookBroken() || durabilityManager.hasUnpaidDebt()) return;
 
         String target = Text.removeTags(event.getTarget());
@@ -65,4 +61,35 @@ public class DoctorInteractionManager
             durabilityManager.repairHook();
         }
     }
+
+//    @Subscribe
+//    public void onMenuOptionClicked(MenuOptionClicked event)
+//    {
+//        if (event.getMenuOption().equals("Fit-Prosthetic"))
+//        {
+//            event.consume();
+//
+//            // 1. Get Actor ID for the face
+//            int doctorId = 3343; // Default Tafani
+//            net.runelite.api.Actor actor = event.getMenuEntry().getActor();
+//            if (actor instanceof net.runelite.api.NPC)
+//            {
+//                doctorId = ((net.runelite.api.NPC) actor).getId();
+//            }
+//
+//            // 2. Determine Text
+//    //        String name = config.insurancePolicy().getDoctorName();
+//            String text = "I've reattached the hook. It should hold for about " +
+//                    Math.round(config.hookDurabilityTicks() / 6000.0) +
+//                    " hours. Try not to break it again, okay?";
+//
+//            // 3. Trigger the Cinematic Dialogue
+//            dialogueManager.openNpcDialogue(doctorId, "Surgeon General Tafani ", text, () ->
+//            {
+//                // This runs when the user clicks "Continue"
+//                client.getLocalPlayer().setAnimation(862); // Cheer
+//                durabilityManager.repairHook();
+//            });
+//        }
+//    }
 }
