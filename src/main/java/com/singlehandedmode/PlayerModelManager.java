@@ -31,7 +31,7 @@ public class PlayerModelManager
 
         int[] equipmentIds = playerComposition.getEquipmentIds();
 
-        if (hookState.isPiratesHookEquipped())
+        if (hookState.isWearingFunctionalHook())
         {
             restoreHandSlot(equipmentIds);
             restoreArmSlot(equipmentIds);

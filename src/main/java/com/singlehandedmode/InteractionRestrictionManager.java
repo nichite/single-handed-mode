@@ -56,7 +56,7 @@ public class InteractionRestrictionManager
     public void checkRestrictions(MenuOptionClicked event)
     {
         // Hook bypasses all restrictions
-        if (hookState.isPiratesHookEquipped()) return;
+        if (hookState.isWearingFunctionalHook()) return;
 
         if (checkGatheringRestrictions(event) || checkAgilityRestrictions(event) || checkToolRestrictions(event))
         {

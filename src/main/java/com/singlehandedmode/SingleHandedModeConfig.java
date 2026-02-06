@@ -240,4 +240,61 @@ public interface SingleHandedModeConfig extends Config
 			section = sectionWithHook
 	)
 	default boolean disableBows() { return true; }
+	// =========================================================
+	// SECTION 5: ECONOMY (INSURANCE)
+	// =========================================================
+	@ConfigSection(
+			name = "Health Insurance",
+			description = "Settings for hook durability and repair costs.",
+			position = 50
+	)
+	String sectionEconomy = "sectionEconomy";
+
+	@ConfigItem(
+			keyName = "hookDurabilityHours",
+			name = "Durability (Hours)",
+			description = "How many hours the hook lasts before breaking.",
+			position = 51,
+			section = sectionEconomy
+	)
+	default int hookDurabilityHours() { return 10; }
+
+	@ConfigItem(
+			keyName = "repairCost",
+			name = "Deductible (GP)",
+			description = "Amount of GP you must DROP to repair the hook.",
+			position = 52,
+			section = sectionEconomy
+	)
+	default int repairCost() { return 1000000; }
+	@ConfigItem(
+			keyName = "penaltyPerSecond",
+			name = "Late Fee (GP/Sec)",
+			description = "Additional GP fine per second if you keep wearing a broken hook.",
+			position = 53,
+			section = sectionEconomy
+	)
+	default int penaltyPerSecond() { return 100; } // 100 gp/sec = 6k gp/min
+
+	// --- HIDDEN PERSISTENCE KEYS ---
+	// We do not add these to a 'section' or give them names,
+	// but we use the ConfigManager to read/write them programmatically.
+	@ConfigItem(
+			keyName = "currentWearTicks",
+			name = "current wear ticks",
+			description = "",
+//			hidden = true
+	position = 54,
+	section = sectionEconomy
+	)
+	default int currentWearTicks() { return 0; }
+	@ConfigItem(
+			keyName = "accumulatedDebt",
+			name = "accumulated debt",
+			description = "",
+//			hidden = true
+	position = 55,
+	section = sectionEconomy
+	)
+	default int accumulatedDebt() { return 0; }
 }

@@ -2,6 +2,7 @@ package com.singlehandedmode;
 
 import javax.inject.Inject;
 import javax.inject.Singleton;
+
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
@@ -11,7 +12,6 @@ import net.runelite.api.ItemContainer;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.events.ItemContainerChanged;
-import net.runelite.api.widgets.Widget;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.util.Text;
 
@@ -20,22 +20,27 @@ import net.runelite.client.util.Text;
 public class HookStateManager
 {
     public static final int PIRATE_HOOK_ID = ItemID.PIRATEHOOK; // or 5045 if using custom
-    private final Client client;
-    private final ItemManager itemManager;
+
+    @Inject
+    private Client client;
+
+    @Inject
+    private ItemManager itemManager;
+
+    @Inject
+    private DurabilityManager durabilityManager;
 
     @Getter
     private boolean isPiratesHookEquipped = false;
 
+    public boolean isWearingFunctionalHook()
+    {
+        return isPiratesHookEquipped && !durabilityManager.isHookBroken();
+    }
+
     // Transient tick tracking
     private int lastShieldRemovalTick = -1;
     private int lastHookEquipTick = -1;
-
-    @Inject
-    public HookStateManager(Client client, ItemManager itemManager)
-    {
-        this.client = client;
-        this.itemManager = itemManager;
-    }
 
     public void onGameTick()
     {

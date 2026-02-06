@@ -4,11 +4,9 @@ import com.google.inject.Provides;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
-import net.runelite.api.events.ClientTick;
-import net.runelite.api.events.GameTick;
-import net.runelite.api.events.ItemContainerChanged;
-import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.api.events.*;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
@@ -23,6 +21,9 @@ public class SingleHandedModePlugin extends Plugin
 {
     @Inject
     private Client client;
+
+    @Inject
+    private EventBus eventBus;
 
     @Inject
     private SingleHandedModeConfig config;
@@ -47,19 +48,41 @@ public class SingleHandedModePlugin extends Plugin
     private ShieldRestrictionOverlay shieldOverlay;
 
     @Inject
+    private BrokenHookOverlay brokenHookOverlay;
+
+    @Inject
+    private InsuranceAgentOverlay insuranceAgentOverlay;
+
+    @Inject
     private AbleismGenerator ableismGenerator;
+
+    @Inject
+    private DurabilityManager durabilityManager;
+
+    @Inject
+    private InsuranceAgentManager agentManager;
+
+    @Inject
+    private PaymentHandler paymentHandler;
+
+    @Inject
+    private DoctorInteractionManager doctorInteractionManager;
 
     @Override
     protected void startUp() throws Exception
     {
+        overlayManager.add(insuranceAgentOverlay);
         updateOverlayState();
+        eventBus.register(doctorInteractionManager);
     }
 
     @Override
     protected void shutDown() throws Exception
     {
         overlayManager.remove(shieldOverlay);
-        // Note: Hands will naturally restore on next game animation/tick if we stop forcing them to 0
+        overlayManager.remove(brokenHookOverlay);
+        overlayManager.remove(insuranceAgentOverlay);
+        eventBus.unregister(doctorInteractionManager);
     }
 
     @Subscribe
@@ -83,22 +106,28 @@ public class SingleHandedModePlugin extends Plugin
         // Safe Pattern: Remove it first to ensure we don't duplicate it.
         // OverlayManager.remove() is safe to call even if it's not currently added.
         overlayManager.remove(shieldOverlay);
+        overlayManager.remove(brokenHookOverlay);
 
         // Only add it back if the restriction is enabled
         if (config.disableShieldsNoHook())
         {
             overlayManager.add(shieldOverlay);
         }
+
+        if (durabilityManager.isHookBroken()) {
+            overlayManager.add(brokenHookOverlay);
+        }
     }
 
     @Subscribe
     public void onGameTick(GameTick event)
     {
-        // 1. Handle NPC Ableism
-        ableismGenerator.maybeGenerateAbleistNpcComment(hookState.isPiratesHookEquipped());
-
-        // 2. Update Hook State (Sync fallback)
+        durabilityManager.onGameTick();
         hookState.onGameTick();
+        agentManager.onGameTick();
+
+        ableismGenerator.maybeGenerateAbleistNpcComment(hookState.isWearingFunctionalHook());
+        updateOverlayState();
     }
 
     @Subscribe
@@ -118,6 +147,8 @@ public class SingleHandedModePlugin extends Plugin
     @Subscribe
     public void onMenuOptionClicked(MenuOptionClicked event)
     {
+        paymentHandler.onMenuOptionClicked(event);
+
         // 1. Capture Context (Did we just click 'remove'?)
         hookState.captureClickIntent(event);
 
@@ -131,6 +162,12 @@ public class SingleHandedModePlugin extends Plugin
 
         // 4. Check: Can we perform this action?
         interactionManager.checkRestrictions(event);
+    }
+
+    @Subscribe
+    public void onItemDespawned(ItemDespawned event)
+    {
+        paymentHandler.onItemDespawned(event);
     }
 
     @Provides

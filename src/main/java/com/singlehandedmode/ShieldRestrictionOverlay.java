@@ -1,7 +1,5 @@
 package com.singlehandedmode;
 
-import java.awt.BasicStroke;
-import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.Rectangle;
@@ -42,7 +40,7 @@ public class ShieldRestrictionOverlay extends Overlay // <--- Change this
     @Override
     public Dimension render(Graphics2D graphics)
     {
-        if (hookStateManager.isPiratesHookEquipped())
+        if (hookStateManager.isWearingFunctionalHook())
         {
             return null;
         }

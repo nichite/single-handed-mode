@@ -53,7 +53,7 @@ public class EquipmentRestrictionManager
         int equipmentSlot = getEquipmentSlot(itemId);
         if (equipmentSlot == -1) return;
 
-        boolean isHookEquipped = hookState.isPiratesHookEquipped() || hookState.wasHookJustEquipped();
+        boolean isHookEquipped = hookState.isWearingFunctionalHook() || hookState.wasHookJustEquipped();
 
         if (isHookEquipped)
         {
@@ -156,7 +156,7 @@ public class EquipmentRestrictionManager
     }
 
     public void checkHookRemoval(MenuOptionClicked event) {
-        if (!hookState.isPiratesHookEquipped()) return;
+        if (!hookState.isWearingFunctionalHook()) return;
 
         if (isHookRemovalInteraction(event))
         {
