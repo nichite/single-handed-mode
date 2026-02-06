@@ -39,6 +39,8 @@ public class InsuranceAgentManager
     // ANIMATIONS
     private static final int ANIM_IDLE = 808;
     private static final int ANIM_WALK = 819;
+    private static final int ANIM_WAVE = 863; // Added
+    private static final int ANIM_CRY = 860;  // Added
 
     // NPC ID for Giles (5438)
     private static final int GILES_NPC_ID = 5438;
@@ -48,6 +50,10 @@ public class InsuranceAgentManager
     private WorldPoint currPos = null;
     private long lastTickTime = 0;
     private int currentAnimationId = -1;
+
+    // DEPARTURE STATE
+    private boolean isLeaving = false;
+    private int departureTick = -1;
 
     @Inject
     public InsuranceAgentManager(Client client, DurabilityManager durabilityManager, PaymentHandler paymentHandler)
@@ -63,12 +69,30 @@ public class InsuranceAgentManager
             overheadText = null; textExpiryTick = -1;
         }
 
-        if (!durabilityManager.hasUnpaidDebt())
+        // 1. DEPARTURE SEQUENCE
+        // If we are currently leaving, ignore normal logic
+        if (isLeaving)
         {
-            despawnAgent();
+            handleDepartureSequence();
             return;
         }
 
+        // 2. CHECK STATUS
+        if (!durabilityManager.hasUnpaidDebt())
+        {
+            // If agent is visible, trigger the wave goodbye
+            if (agent != null && agent.isActive())
+            {
+                startDepartureSequence();
+            }
+            else
+            {
+                despawnAgent();
+            }
+            return;
+        }
+
+        // 3. NORMAL AI
         WorldPoint goal = paymentHandler.isTrackingPayment()
                 ? paymentHandler.getPaymentLocation()
                 : client.getLocalPlayer().getWorldLocation();
@@ -79,11 +103,49 @@ public class InsuranceAgentManager
         updateAgentLogic(goal);
     }
 
+    private void startDepartureSequence()
+    {
+        isLeaving = true;
+        departureTick = 0;
+
+        // Face the player
+        WorldPoint playerLoc = client.getLocalPlayer().getWorldLocation();
+        rotateAgentTowards(playerLoc);
+
+        // Agent Waves
+        if (agent != null)
+        {
+            agent.setAnimation(client.loadAnimation(ANIM_WAVE));
+            agent.setShouldLoop(false);
+            currentAnimationId = ANIM_WAVE;
+        }
+
+        // Player Cries
+        client.getLocalPlayer().setAnimation(ANIM_CRY);
+
+        say("Pleasure doing business.", 5);
+    }
+
+    private void handleDepartureSequence()
+    {
+        departureTick++;
+
+        // Keep updating time for the renderer, so he doesn't disappear
+        lastTickTime = System.currentTimeMillis();
+
+        // Wait 5 ticks then disappear
+        if (departureTick >= 5)
+        {
+            despawnAgent();
+            isLeaving = false;
+        }
+    }
+
     private void updateAgentLogic(WorldPoint goal)
     {
         if (agent == null || currPos == null)
         {
-            // Try to spawn 1 tile away, but ensure it's valid
+            // Try to spawn 1 tile away
             WorldPoint spawnPos = new WorldPoint(goal.getX() - 1, goal.getY(), goal.getPlane());
             initializeAgent(spawnPos);
             prevPos = spawnPos;
@@ -96,21 +158,23 @@ public class InsuranceAgentManager
 
         lastTickTime = System.currentTimeMillis();
 
-        // 1. Safety Teleport (Distance > 15 or Plane change)
+        // 1. Safety Teleport & Plane Change Check
+        // FIX: Added plane check to ensure he teleports if you go up/down stairs
         if (currPos.distanceTo(goal) > 15 || currPos.getPlane() != goal.getPlane())
         {
             currPos = new WorldPoint(goal.getX() - 1, goal.getY(), goal.getPlane());
             prevPos = currPos;
+
+            // FIX: Use currPos.getPlane() instead of 0
             LocalPoint lp = LocalPoint.fromWorld(client, currPos);
-            if (lp != null) agent.setLocation(lp, 0);
+            if (lp != null) agent.setLocation(lp, currPos.getPlane());
             return;
         }
 
-        // 2. PATHFINDING: Find the next legal step
+        // 2. PATHFINDING
         int distance = currPos.distanceTo(goal);
         int animToPlay = ANIM_IDLE;
 
-        // Only move if we are not adjacent to the target
         if (distance > 1)
         {
             // Use BFS to find the next valid tile
@@ -118,23 +182,17 @@ public class InsuranceAgentManager
 
             if (nextStep != null)
             {
-                // We found a path! Move there.
                 currPos = nextStep;
                 animToPlay = ANIM_WALK;
-
-                // Face where we are going
-                rotateAgentTowards(currPos);
+                rotateAgentTowards(goal); // Strafe
             }
             else
             {
-                // No path found (blocked by wall), stay Idle.
-                // Optionally: Face the target anyway so he looks at you through the wall
                 rotateAgentTowards(goal);
             }
         }
         else
         {
-            // Close enough, just look at player
             rotateAgentTowards(goal);
         }
 
@@ -147,23 +205,27 @@ public class InsuranceAgentManager
         }
     }
 
+    private void rotateAgentTowards(WorldPoint target)
+    {
+        double dx = target.getX() - currPos.getX();
+        double dy = target.getY() - currPos.getY();
+        double theta = Math.atan2(dy, dx);
+        int jagexOri = (int) (1536 - (theta * 1024 / Math.PI)) & 2047;
+        agent.setOrientation(jagexOri);
+    }
+
     /**
-     * A Breadth-First Search (BFS) to find the next step towards the target
-     * while respecting Collision Maps (Walls/Objects).
+     * BFS Pathfinding (Collision Aware)
      */
     private WorldPoint findNextStep(WorldPoint start, WorldPoint target)
     {
-        // Limit search depth to avoid lag (20 tiles is plenty for a follower)
         final int MAX_DEPTH = 20;
-
-        // 1. Get Collision Data
         CollisionData[] collisionMaps = client.getCollisionMaps();
         if (collisionMaps == null) return null;
 
         int plane = client.getPlane();
         int[][] flags = collisionMaps[plane].getFlags();
 
-        // Use LocalPoints for collision checks (Scene Coordinates)
         LocalPoint startLp = LocalPoint.fromWorld(client, start);
         LocalPoint targetLp = LocalPoint.fromWorld(client, target);
         if (startLp == null || targetLp == null) return null;
@@ -173,39 +235,22 @@ public class InsuranceAgentManager
         int targetX = targetLp.getSceneX();
         int targetY = targetLp.getSceneY();
 
-        // 2. BFS Setup
         Queue<Node> queue = new ArrayDeque<>();
         Set<Integer> visited = new HashSet<>();
 
         queue.add(new Node(startX, startY, null));
-        visited.add((startX << 16) | startY); // Simple hash for coordinate pair
+        visited.add((startX << 16) | startY);
 
         Node solution = null;
 
-        // 3. Run Search
         while (!queue.isEmpty())
         {
             Node current = queue.poll();
 
-            // Check if we reached target
-            if (current.x == targetX && current.y == targetY)
-            {
-                solution = current;
-                break;
-            }
-
-            // Or if we are adjacent to target (since we stop 1 tile away)
-            if (Math.abs(current.x - targetX) <= 1 && Math.abs(current.y - targetY) <= 1)
-            {
-                solution = current;
-                break;
-            }
-
-            // Stop if too deep
+            if (current.x == targetX && current.y == targetY) { solution = current; break; }
+            if (Math.abs(current.x - targetX) <= 1 && Math.abs(current.y - targetY) <= 1) { solution = current; break; }
             if (getPathLength(current) >= MAX_DEPTH) continue;
 
-            // Check Neighbors (North, South, East, West)
-            // Order: Try to prioritize direction of target for efficiency
             int[][] directions = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}};
 
             for (int[] dir : directions)
@@ -213,13 +258,9 @@ public class InsuranceAgentManager
                 int nextX = current.x + dir[0];
                 int nextY = current.y + dir[1];
 
-                // Bounds check
                 if (nextX < 0 || nextY < 0 || nextX >= 104 || nextY >= 104) continue;
-
-                // Visited check
                 if (visited.contains((nextX << 16) | nextY)) continue;
 
-                // COLLISION CHECK
                 if (canMove(flags, current.x, current.y, dir[0], dir[1]))
                 {
                     visited.add((nextX << 16) | nextY);
@@ -228,24 +269,18 @@ public class InsuranceAgentManager
             }
         }
 
-        // 4. Backtrack to find the FIRST step
         if (solution != null)
         {
             Node step = solution;
-            // Trace back until the parent is the start node
             while (step.parent != null && step.parent.parent != null)
             {
                 step = step.parent;
             }
-
-            // Convert back to WorldPoint
             return WorldPoint.fromScene(client, step.x, step.y, plane);
         }
-
-        return null; // No path found
+        return null;
     }
 
-    // Check if movement is allowed between two tiles
     private boolean canMove(int[][] flags, int currentX, int currentY, int dx, int dy)
     {
         int nextX = currentX + dx;
@@ -253,57 +288,28 @@ public class InsuranceAgentManager
         int currentFlag = flags[currentX][currentY];
         int nextFlag = flags[nextX][nextY];
 
-        // North
-        if (dy == 1 && dx == 0)
-        {
+        if (dy == 1 && dx == 0) {
             if ((currentFlag & CollisionDataFlag.BLOCK_MOVEMENT_NORTH) != 0) return false;
             if ((nextFlag & CollisionDataFlag.BLOCK_MOVEMENT_SOUTH) != 0) return false;
         }
-        // South
-        else if (dy == -1 && dx == 0)
-        {
+        else if (dy == -1 && dx == 0) {
             if ((currentFlag & CollisionDataFlag.BLOCK_MOVEMENT_SOUTH) != 0) return false;
             if ((nextFlag & CollisionDataFlag.BLOCK_MOVEMENT_NORTH) != 0) return false;
         }
-        // East
-        else if (dx == 1 && dy == 0)
-        {
+        else if (dx == 1 && dy == 0) {
             if ((currentFlag & CollisionDataFlag.BLOCK_MOVEMENT_EAST) != 0) return false;
             if ((nextFlag & CollisionDataFlag.BLOCK_MOVEMENT_WEST) != 0) return false;
         }
-        // West
-        else if (dx == -1 && dy == 0)
-        {
+        else if (dx == -1 && dy == 0) {
             if ((currentFlag & CollisionDataFlag.BLOCK_MOVEMENT_WEST) != 0) return false;
             if ((nextFlag & CollisionDataFlag.BLOCK_MOVEMENT_EAST) != 0) return false;
         }
-
-        // Check for full blocks (walls/objects) on the destination tile
         if ((nextFlag & CollisionDataFlag.BLOCK_MOVEMENT_FULL) != 0) return false;
-
         return true;
     }
 
-    // Helper class for BFS
-    private static class Node
-    {
-        int x, y;
-        Node parent;
-
-        Node(int x, int y, Node parent)
-        {
-            this.x = x;
-            this.y = y;
-            this.parent = parent;
-        }
-    }
-
-    private int getPathLength(Node node)
-    {
-        int count = 0;
-        while (node.parent != null) { node = node.parent; count++; }
-        return count;
-    }
+    private static class Node { int x, y; Node parent; Node(int x, int y, Node parent) { this.x = x; this.y = y; this.parent = parent; } }
+    private int getPathLength(Node node) { int count = 0; while (node.parent != null) { node = node.parent; count++; } return count; }
 
     @Subscribe
     public void onClientTick(ClientTick event)
@@ -315,7 +321,8 @@ public class InsuranceAgentManager
 
         if (startLp == null || endLp == null)
         {
-            if (endLp != null) agent.setLocation(endLp, 0);
+            // FIX: Use currPos.getPlane() instead of 0
+            if (endLp != null) agent.setLocation(endLp, currPos.getPlane());
             return;
         }
 
@@ -326,33 +333,8 @@ public class InsuranceAgentManager
         int x = (int) (startLp.getX() + ((endLp.getX() - startLp.getX()) * progress));
         int y = (int) (startLp.getY() + ((endLp.getY() - startLp.getY()) * progress));
 
-        agent.setLocation(new LocalPoint(x, y), 0);
-    }
-
-    private void rotateAgentTowards(WorldPoint target)
-    {
-        // For 'Next Step' rotation, we want to face the IMMEDIATE tile we are moving to
-        // If we are idle, we face the final target.
-        WorldPoint faceTarget = (currPos.distanceTo(target) <= 1) ? target : currPos;
-
-        // If we are moving, faceTarget is actually 'currPos' because 'currPos'
-        // has already been updated to the destination in the logic step above.
-        // But we want to calculate rotation based on PREVIOUS pos vs CURRENT pos.
-
-        if (prevPos != null && !prevPos.equals(currPos)) {
-            double dx = currPos.getX() - prevPos.getX();
-            double dy = currPos.getY() - prevPos.getY();
-            double theta = Math.atan2(dy, dx);
-            int jagexOri = (int) (1536 - (theta * 1024 / Math.PI)) & 2047;
-            agent.setOrientation(jagexOri);
-        } else {
-            // Idle facing logic
-            double dx = target.getX() - currPos.getX();
-            double dy = target.getY() - currPos.getY();
-            double theta = Math.atan2(dy, dx);
-            int jagexOri = (int) (1536 - (theta * 1024 / Math.PI)) & 2047;
-            agent.setOrientation(jagexOri);
-        }
+        // FIX: Use currPos.getPlane() instead of 0
+        agent.setLocation(new LocalPoint(x, y), currPos.getPlane());
     }
 
     private void initializeAgent(WorldPoint startPos)
@@ -364,7 +346,9 @@ public class InsuranceAgentManager
         agent.setAnimation(client.loadAnimation(ANIM_IDLE));
         currentAnimationId = ANIM_IDLE;
         LocalPoint lp = LocalPoint.fromWorld(client, startPos);
-        if (lp != null) agent.setLocation(lp, 0);
+
+        // FIX: Use startPos.getPlane()
+        if (lp != null) agent.setLocation(lp, startPos.getPlane());
     }
 
     private void updateAgentModel(int npcId)
@@ -376,7 +360,11 @@ public class InsuranceAgentManager
         {
             net.runelite.api.ModelData[] parts = new net.runelite.api.ModelData[modelIds.length];
             for (int i = 0; i < modelIds.length; i++) parts[i] = client.loadModelData(modelIds[i]);
+
+            // NOTE: If mergeModels(ModelData[]) is not available, you must use the
+            // Model[] array conversion logic. For now, keeping your starting point logic.
             net.runelite.api.ModelData mergedData = client.mergeModels(parts);
+
             net.runelite.api.Model finalModel = mergedData.light(64, 850, -30, -50, -30);
             agent.setModel(finalModel);
         }
