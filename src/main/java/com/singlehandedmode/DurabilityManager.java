@@ -43,7 +43,7 @@ public class DurabilityManager
     {
 //        if (!hookState.isPiratesHookEquipped()) return;
 
-        if (!isBroken && hookState.isPiratesHookEquipped())
+        if (hookState.isWearingFunctionalHook())
         {
             // NORMAL WEAR
             ++wearTicks;
@@ -136,7 +136,7 @@ public class DurabilityManager
     private void saveProgress()
     {
         log.debug("Saving hook durability: wear ticks: " + wearTicks + ", penalty debt: " + penaltyDebt);
-        configManager.setConfiguration("singlehandedmode", "currentWearTicks", wearTicks);
-        configManager.setConfiguration("singlehandedmode", "accumulatedDebt", penaltyDebt);
+        configManager.setConfiguration(SingleHandedModeConfig.GROUP, "currentWearTicks", wearTicks);
+        configManager.setConfiguration(SingleHandedModeConfig.GROUP, "accumulatedDebt", penaltyDebt);
     }
 }

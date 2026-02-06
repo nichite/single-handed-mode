@@ -6,9 +6,11 @@ import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.Range;
 
-@ConfigGroup("singlehandedmode")
+@ConfigGroup(SingleHandedModeConfig.GROUP)
 public interface SingleHandedModeConfig extends Config
 {
+	String GROUP = "singlehandedmode";
+
 	// =========================================================
 	// SECTION 1: VISUALS
 	// =========================================================
