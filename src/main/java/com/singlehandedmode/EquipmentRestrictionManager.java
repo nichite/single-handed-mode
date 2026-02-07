@@ -8,19 +8,31 @@ import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.EquipmentInventorySlot;
 import net.runelite.api.InventoryID;
-import net.runelite.api.ItemComposition;
+import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.client.game.ItemManager;
+import net.runelite.client.game.ItemStats;
 import net.runelite.client.util.Text;
 
 @Singleton
 public class EquipmentRestrictionManager
 {
-    private final Client client;
-    private final ItemManager itemManager;
-    private final HookStateManager hookState;
-    private final SingleHandedModeConfig config;
+    @Inject
+    private Client client;
+
+    @Inject
+    private ItemManager itemManager;
+
+    @Inject
+    private HookStateManager hookState;
+
+    @Inject
+    private DurabilityManager durabilityManager;
+
+    @Inject
+    private SingleHandedModeConfig config;
 
     private static final Set<String> BANNED_OFFHAND_KEYWORDS = ImmutableSet.of(
             "defender", "book", "torch", "lantern", "hammer", "orb", "chalice", "skull", "head", "tankard", "cane"
@@ -30,18 +42,10 @@ public class EquipmentRestrictionManager
             "torag's hammers", "macuahuitl", "claws", "boxing", "knuckles"
     );
 
-    @Inject
-    public EquipmentRestrictionManager(Client client, ItemManager itemManager, HookStateManager hookState, SingleHandedModeConfig config)
-    {
-        this.client = client;
-        this.itemManager = itemManager;
-        this.hookState = hookState;
-        this.config = config;
-    }
-
     public void checkRestrictions(MenuOptionClicked event)
     {
         String option = Text.removeTags(event.getMenuOption()).toLowerCase();
+
         if (!option.equals("wield") && !option.equals("wear") && !option.equals("equip") && !option.equals("hold"))
         {
             return;
@@ -49,6 +53,14 @@ public class EquipmentRestrictionManager
 
         int itemId = event.getItemId();
         if (itemId == -1) return;
+
+
+        if (itemId == ItemID.PIRATEHOOK && durabilityManager.isHookBroken())
+        {
+            blockEvent(event, "The broken hook simply slides off your arm.");
+            return;
+        }
+        // -------------------------------------
 
         int equipmentSlot = getEquipmentSlot(itemId);
         if (equipmentSlot == -1) return;
@@ -104,14 +116,11 @@ public class EquipmentRestrictionManager
             }
         }
 
-        // 3. Disable Bows (String drawing requires fingers)
+        // 3. Disable Bows
         if (config.disableBows() && slot == EquipmentInventorySlot.WEAPON.getSlotIdx())
         {
             String name = itemManager.getItemComposition(itemId).getName().toLowerCase();
-            // Allow Crossbows, Ballistas, etc. Ban standard bows.
             boolean isBow = name.contains("bow") && !name.contains("crossbow") && !name.contains("ballista") && !name.contains("crystal bow");
-            // Crystal bow is technically magic? Up to you.
-            // Standard "Shortbow", "Longbow", "Composite Bow", "Seercull", "Twisted Bow".
 
             if (isBow)
             {
@@ -120,16 +129,13 @@ public class EquipmentRestrictionManager
         }
     }
 
-    // ... (Helpers: checkHookRemoval, isHookRemovalInteraction, isHoldingIllegalItem, blockEvent, getEquipmentSlot, nameContainsKeyword remain same) ...
-    // Note: I omitted repeating them to save space, but ensure 'isTwoHanded' helper is present:
+    // --- Helpers ---
 
     private boolean isTwoHanded(int itemId)
     {
-        var stats = itemManager.getItemStats(itemId, false);
+        ItemStats stats = itemManager.getItemStats(itemId);
         return stats != null && stats.getEquipment() != null && stats.getEquipment().isTwoHanded();
     }
-
-    // ... existing helpers ...
 
     private void blockEvent(MenuOptionClicked event, String message)
     {
@@ -139,42 +145,44 @@ public class EquipmentRestrictionManager
 
     private int getEquipmentSlot(int itemId)
     {
-        var stats = itemManager.getItemStats(itemId, false);
+        ItemStats stats = itemManager.getItemStats(itemId);
         return (stats != null && stats.getEquipment() != null) ? stats.getEquipment().getSlot() : -1;
     }
 
     private boolean nameContainsKeyword(int itemId, Set<String> keywords)
     {
-        ItemComposition def = itemManager.getItemComposition(itemId);
-        if (def == null) return false;
+        var def = itemManager.getItemComposition(itemId);
         String name = def.getName().toLowerCase();
-
-        // Exception for Shields in banned list
         if (keywords == BANNED_OFFHAND_KEYWORDS && name.contains("shield")) return false;
 
         return keywords.stream().anyMatch(name::contains);
     }
 
-    public void checkHookRemoval(MenuOptionClicked event) {
+    // --- Hook Removal Logic ---
+
+    public void checkHookRemoval(MenuOptionClicked event)
+    {
         if (!hookState.isWearingFunctionalHook()) return;
 
         if (isHookRemovalInteraction(event))
         {
-            if (isHoldingIllegalItem() && !hookState.wasShieldJustRemoved())
+            if (isHoldingIllegalItem())
             {
-                blockEvent(event, "You cannot remove your hook while you're using it.");
+                blockEvent(event, "You cannot remove your hook while you're using it to hold something.");
             }
         }
     }
 
     private boolean isHookRemovalInteraction(MenuOptionClicked event)
     {
-        String option = event.getMenuOption();
-        if (option.equalsIgnoreCase("Remove"))
+        String option = Text.removeTags(event.getMenuOption());
+        String target = Text.removeTags(event.getMenuTarget());
+
+        if (option.equalsIgnoreCase("Remove") && target.equalsIgnoreCase("Pirate's hook"))
         {
-            return Text.removeTags(event.getMenuTarget()).equalsIgnoreCase("Pirate's hook");
+            return true;
         }
-        // Check implicit removal by swapping gloves
+
         if (option.equalsIgnoreCase("Wear") || option.equalsIgnoreCase("Wield"))
         {
             return getEquipmentSlot(event.getItemId()) == EquipmentInventorySlot.GLOVES.getSlotIdx();
@@ -189,11 +197,10 @@ public class EquipmentRestrictionManager
 
         if (equipment.getItem(EquipmentInventorySlot.SHIELD.getSlotIdx()) != null) return true;
 
-        var weapon = equipment.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx());
+        Item weapon = equipment.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx());
         if (weapon != null)
         {
-            var stats = itemManager.getItemStats(weapon.getId(), false);
-            return stats != null && stats.getEquipment().isTwoHanded();
+            return isTwoHanded(weapon.getId());
         }
         return false;
     }
