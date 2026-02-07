@@ -45,6 +45,9 @@ public class SingleHandedModePlugin extends Plugin
     private BrokenHookOverlay brokenHookOverlay;
 
     @Inject
+    private BrokenHookTextOverride brokenHookTextOverride;
+
+    @Inject
     private InsuranceAgentOverlay insuranceAgentOverlay;
 
     @Inject
@@ -80,6 +83,7 @@ public class SingleHandedModePlugin extends Plugin
 
         eventBus.register(doctorInteractionManager);
         eventBus.register(insuranceAgentManager);
+        eventBus.register(brokenHookTextOverride);
     }
 
     @Override
@@ -95,6 +99,7 @@ public class SingleHandedModePlugin extends Plugin
 
         eventBus.unregister(doctorInteractionManager);
         eventBus.unregister(insuranceAgentManager);
+        eventBus.unregister(brokenHookTextOverride);
     }
 
     @Subscribe
