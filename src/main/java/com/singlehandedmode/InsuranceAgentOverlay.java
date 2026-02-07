@@ -56,8 +56,7 @@ public class InsuranceAgentOverlay extends Overlay
 
         // 4. Calculate Text Position
         // A standard human NPC is about 180-200 units tall.
-        // We add ~40 extra units for the text float height.
-        int zOffset = 240;
+        int zOffset = 190;
 
         Point textLocation = Perspective.getCanvasTextLocation(client, graphics, lp, text, zOffset);
 

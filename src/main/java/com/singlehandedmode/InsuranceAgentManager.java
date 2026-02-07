@@ -31,18 +31,51 @@ public class InsuranceAgentManager
     @Getter
     private String overheadText = null;
     private int textExpiryTick = -1;
+
+    // Timer for speech (15 seconds * 1.66 ticks/sec = ~25 ticks)
+    private int nextSpeechTick = 0;
+    private static final int SPEECH_INTERVAL_TICKS = 25;
+
     private final Random random = new Random();
+
+    // --- DIALOGUE POOLS ---
+    private static final String[] NAGGING_LINES = {
+            "Your premium is overdue, sir.",
+            "My records indicate a missing payment of {gp}.",
+            "I can do this all day.",
+            "Interest is accruing as we speak.",
+            "That hook is a liability until you pay {gp}.",
+            "Please, for your own sake, settle the debt.",
+            "We really don't want to involve the bouncers.",
+            "Coverage is suspended until {gp} are remitted.",
+            "You can't outrun the actuarial tables.",
+            "Just drop the {gp} and I'll be on my way.",
+            "I'm legally required to follow you.",
+            "Do you have any idea how much paperwork this creates?",
+            "Failure to pay {gp} will result in a credit score drop."
+    };
+
+    private static final String[] COLLECTING_LINES = {
+            "Let's verify this transaction...",
+            "One... two... yes, very good.",
+            "Standard deduction applied.",
+            "Processing payment, please wait.",
+            "I hope this covers the deductible.",
+            "Let me just count this up.",
+            "Don't worry, I have my receipt book right here.",
+            "Liquid assets. Always preferred.",
+            "Updating the ledger...",
+            "Strictly business, nothing personal.",
+            "Finally. Let's see if it's all here."
+    };
 
     // --- ID CONSTANTS ---
     private static final int NPC_GILES_LAND = 5438;
-
-    // Using the real Underwater ID (Diving Gear)
     private static final int NPC_GILES_WATER = 5441;
 
-    // ANIMATIONS (Reverted to Standard Walking for stability)
+    // ANIMATIONS
     private static final int ANIM_IDLE = 808;
     private static final int ANIM_WALK = 819;
-
     private static final int ANIM_WAVE = 863;
     private static final int ANIM_CRY = 860;
 
@@ -51,7 +84,7 @@ public class InsuranceAgentManager
             15008, // Fossil Island Underwater (North)
             15264, // Fossil Island Underwater (South)
             11924, // Mogre Camp
-            13194  // Coral nursery
+            13194 // Coral nursery
     ));
 
     // STATE
@@ -77,16 +110,14 @@ public class InsuranceAgentManager
         if (event.getGameState() == GameState.LOGGED_IN || event.getGameState() == GameState.LOADING)
         {
             needsRespawn = true;
+            nextSpeechTick = client.getTickCount() + SPEECH_INTERVAL_TICKS;
         }
     }
 
     @Subscribe
     public void onClientTick(ClientTick event)
     {
-        if (agent != null)
-        {
-            agent.render();
-        }
+        agent.render();
     }
 
     public void onGameTick()
@@ -129,24 +160,20 @@ public class InsuranceAgentManager
         if (nowUnderwater != isUnderwater)
         {
             isUnderwater = nowUnderwater;
-            // Force respawn to swap model immediately
-            if (agent.isActive())
-            {
-                agent.despawn();
-            }
+            if (agent.isActive()) agent.despawn();
         }
     }
 
     private void runAgentBehavior()
     {
+        // 1. Handle Dialogue (Timer Based)
+        handleDialogue();
+
+        // 2. Handle Movement / Spawning
         WorldPoint goal = paymentHandler.isTrackingPayment()
                 ? paymentHandler.getPaymentLocation()
                 : client.getLocalPlayer().getWorldLocation();
 
-        if (paymentHandler.isTrackingPayment()) mutterAboutNumbers();
-        else maybeTalk();
-
-        // Use correct ID, but same standard animations
         int currentNpcId = isUnderwater ? NPC_GILES_WATER : NPC_GILES_LAND;
 
         if (!agent.isActive() || agent.getCurrentPos() == null)
@@ -194,6 +221,40 @@ public class InsuranceAgentManager
         }
     }
 
+    private void handleDialogue()
+    {
+        int currentTick = client.getTickCount();
+
+        // Only speak if interval has passed
+        if (currentTick >= nextSpeechTick)
+        {
+            if (paymentHandler.isTrackingPayment())
+            {
+                // He is picking up money (Collecting Mode)
+                String line = COLLECTING_LINES[random.nextInt(COLLECTING_LINES.length)];
+                say(line, 5);
+            }
+            else
+            {
+                // He is following (Nagging Mode)
+                String line = NAGGING_LINES[random.nextInt(NAGGING_LINES.length)];
+
+                // Inject the debt amount if the line requires it
+                if (line.contains("{gp}"))
+                {
+                    // Format with commas (e.g. "1,250,000 coins")
+                    String debtString = String.format("%,d coins", durabilityManager.getTotalRepairCost());
+                    line = line.replace("{gp}", debtString);
+                }
+
+                say(line, 5);
+            }
+
+            // Reset Timer
+            nextSpeechTick = currentTick + SPEECH_INTERVAL_TICKS;
+        }
+    }
+
     private void startDepartureSequence()
     {
         isLeaving = true;
@@ -201,7 +262,7 @@ public class InsuranceAgentManager
 
         agent.faceTarget(client.getLocalPlayer().getWorldLocation());
         agent.setAnimation(ANIM_WAVE, false);
-        client.getLocalPlayer().setAnimation(ANIM_CRY);
+         client.getLocalPlayer().setAnimation(ANIM_CRY);
 
         say("Pleasure doing business.", 5);
     }
@@ -220,15 +281,5 @@ public class InsuranceAgentManager
     {
         this.overheadText = text;
         this.textExpiryTick = client.getTickCount() + durationTicks;
-    }
-
-    private void maybeTalk()
-    {
-        if (random.nextInt(100) < 2) say("You owe " + durabilityManager.getTotalRepairCost() + " gp!", 4);
-    }
-
-    private void mutterAboutNumbers()
-    {
-        if (random.nextInt(100) < 3) say("Counting...", 4);
     }
 }
