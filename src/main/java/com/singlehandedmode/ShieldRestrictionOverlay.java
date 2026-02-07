@@ -8,72 +8,81 @@ import javax.inject.Inject;
 
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
-import net.runelite.api.gameval.ItemID;
+import net.runelite.api.ItemID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.game.ItemManager;
-import net.runelite.client.ui.overlay.Overlay; // <--- The correct import
+import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
 
 @Slf4j
-public class ShieldRestrictionOverlay extends Overlay // <--- Change this
+public class ShieldRestrictionOverlay extends Overlay
 {
-    // Appears to not be in the ComponentID list
-    private static final int SHIELD_SLOT_COMPONENT_ID = 25362452;
+    // A list of all widgets that represent the Shield Slot
+    private static final int[] SHIELD_SLOTS = {
+            25362452, // Standard Equipment Tab
+            786498,   // Bank "Worn Items"
+            5505039,  // "View Equipment Stats" window
+    };
 
     private final Client client;
     private final HookStateManager hookStateManager;
     private final ItemManager itemManager;
+    private final SingleHandedModeConfig config;
 
     @Inject
-    public ShieldRestrictionOverlay(Client client, HookStateManager hookStateManager, ItemManager itemManager)
+    public ShieldRestrictionOverlay(Client client, HookStateManager hookStateManager, ItemManager itemManager, SingleHandedModeConfig config)
     {
         this.client = client;
         this.hookStateManager = hookStateManager;
         this.itemManager = itemManager;
+        this.config = config;
 
-        // Set up the overlay rules
-        setPosition(OverlayPosition.DYNAMIC); // Allows us to draw anywhere (like over a specific widget)
-        setLayer(OverlayLayer.ABOVE_WIDGETS); // Draws on top of the inventory interface
+        setPosition(OverlayPosition.DYNAMIC);
+        setLayer(OverlayLayer.ABOVE_WIDGETS);
     }
 
     @Override
     public Dimension render(Graphics2D graphics)
     {
-        if (hookStateManager.isWearingFunctionalHook())
+        // 1. Logic Check: Only draw if rule is active and hook is missing
+        if (hookStateManager.isWearingFunctionalHook() || !config.disableShieldsNoHook())
         {
             return null;
         }
 
-        // Group 387 (Equipment), Child 38 (Shield Slot)
-        // This is the specific slot ID for the shield on the equipment screen.
-        Widget shieldSlot = client.getWidget(SHIELD_SLOT_COMPONENT_ID);
-        if (shieldSlot == null || shieldSlot.isHidden())
-        {
-            return null;
-        }
-
-
-        // 3. Get the Bank Filler Image
-        // Use getImage() to get the standard inventory sprite for the item
+        // 2. Load Image (Bank Filler / Cancel Sign)
         BufferedImage bankFillerImage = itemManager.getImage(ItemID.BANK_FILLER);
-
         if (bankFillerImage == null)
         {
             return null;
         }
 
-        // 4. Center the Image
-        Rectangle bounds = shieldSlot.getBounds();
+        // 3. Iterate through all known shield slots
+        for (int widgetId : SHIELD_SLOTS)
+        {
+            Widget shieldSlot = client.getWidget(widgetId);
 
-        // Calculate the center position
-        // bounds.x + (SlotWidth - ImageWidth) / 2
-        int x = bounds.x + (bounds.width - bankFillerImage.getWidth()) / 2;
-        int y = bounds.y + (bounds.height - bankFillerImage.getHeight()) / 2;
+            // Skip if this specific widget isn't currently on screen
+            if (shieldSlot == null || shieldSlot.isHidden())
+            {
+                continue;
+            }
 
-        // 5. Draw the Image
-        graphics.drawImage(bankFillerImage, x, y, null);
+            drawBlocker(graphics, shieldSlot, bankFillerImage);
+        }
 
         return null;
+    }
+
+    private void drawBlocker(Graphics2D graphics, Widget widget, BufferedImage image)
+    {
+        Rectangle bounds = widget.getBounds();
+
+        // Calculate center position
+        int x = bounds.x + (bounds.width - image.getWidth()) / 2;
+        int y = bounds.y + (bounds.height - image.getHeight()) / 2;
+
+        graphics.drawImage(image, x, y, null);
     }
 }
