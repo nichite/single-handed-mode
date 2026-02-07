@@ -35,15 +35,13 @@ public class InsuranceAgentManager
 
     // --- ID CONSTANTS ---
     private static final int NPC_GILES_LAND = 5438;
-    private static final int ANIM_LAND_IDLE = 808;
-    private static final int ANIM_LAND_WALK = 819;
 
-    // UNDERWATER
-    private static final int NPC_GILES_WATER = 5441; // Correct Diving Gear ID
+    // Using the real Underwater ID (Diving Gear)
+    private static final int NPC_GILES_WATER = 5441;
 
-    // Use 772 (Treading Water) for BOTH idle and move to prevent sliding.
-    private static final int ANIM_WATER_IDLE = 772;
-    private static final int ANIM_WATER_MOVE = 772;
+    // ANIMATIONS (Reverted to Standard Walking for stability)
+    private static final int ANIM_IDLE = 808;
+    private static final int ANIM_WALK = 819;
 
     private static final int ANIM_WAVE = 863;
     private static final int ANIM_CRY = 860;
@@ -148,19 +146,15 @@ public class InsuranceAgentManager
         if (paymentHandler.isTrackingPayment()) mutterAboutNumbers();
         else maybeTalk();
 
-        // 1. DETERMINE VISUALS
+        // Use correct ID, but same standard animations
         int currentNpcId = isUnderwater ? NPC_GILES_WATER : NPC_GILES_LAND;
-        int currentIdleAnim = isUnderwater ? ANIM_WATER_IDLE : ANIM_LAND_IDLE;
-        int currentWalkAnim = isUnderwater ? ANIM_WATER_MOVE : ANIM_LAND_WALK;
 
-        // 2. SPAWN
         if (!agent.isActive() || agent.getCurrentPos() == null)
         {
             WorldPoint spawnPos = new WorldPoint(goal.getX() - 1, goal.getY(), goal.getPlane());
             agent.spawn(spawnPos, currentNpcId);
         }
 
-        // 3. SNAP (Scene Safety)
         if (LocalPoint.fromWorld(client, agent.getCurrentPos()) == null)
         {
             WorldPoint snapPos = new WorldPoint(goal.getX() - 1, goal.getY(), goal.getPlane());
@@ -168,7 +162,6 @@ public class InsuranceAgentManager
             return;
         }
 
-        // 4. TELEPORT (Distance Safety)
         if (agent.getCurrentPos().distanceTo(goal) > 15 || agent.getCurrentPos().getPlane() != goal.getPlane())
         {
             WorldPoint newPos = new WorldPoint(goal.getX() - 1, goal.getY(), goal.getPlane());
@@ -177,7 +170,6 @@ public class InsuranceAgentManager
             return;
         }
 
-        // 5. MOVEMENT
         int distance = agent.getCurrentPos().distanceTo(goal);
 
         if (distance > 1)
@@ -186,18 +178,18 @@ public class InsuranceAgentManager
             if (nextStep != null)
             {
                 agent.moveTo(nextStep);
-                agent.setAnimation(currentWalkAnim);
+                agent.setAnimation(ANIM_WALK);
                 agent.faceTarget(goal);
             }
             else
             {
-                agent.setAnimation(currentIdleAnim);
+                agent.setAnimation(ANIM_IDLE);
                 agent.faceTarget(goal);
             }
         }
         else
         {
-            agent.setAnimation(currentIdleAnim);
+            agent.setAnimation(ANIM_IDLE);
             agent.faceTarget(goal);
         }
     }

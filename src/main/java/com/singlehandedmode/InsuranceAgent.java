@@ -1,25 +1,19 @@
 package com.singlehandedmode;
 
 import lombok.Getter;
-import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.Constants;
+import net.runelite.api.NPCComposition;
 import net.runelite.api.RuneLiteObject;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
 
-import java.util.Arrays;
-
-@Slf4j
 public class InsuranceAgent
 {
     private final Client client;
 
     @Getter
     private RuneLiteObject rlo;
-
-    // Constant for the water check
-    private static final int NPC_GILES_WATER = 5441;
 
     @Getter private WorldPoint currentPos;
     @Getter private WorldPoint previousPos;
@@ -64,7 +58,6 @@ public class InsuranceAgent
     {
         if (rlo == null) return;
 
-        // If we have no history, snap instead of sliding
         if (currentPos == null)
         {
             snapTo(newPos);
@@ -136,22 +129,28 @@ public class InsuranceAgent
         rlo.setLocation(new LocalPoint(x, y), currentPos.getPlane());
     }
 
-    // TODO: fix missing legs
     private void loadModel(int npcId)
     {
-        net.runelite.api.NPCComposition config = client.getNpcDefinition(npcId);
-        if (config == null || config.getModels() == null) return;
+        NPCComposition config = client.getNpcDefinition(npcId);
+        if (config == null) return;
 
         int[] modelIds = config.getModels();
+        if (modelIds == null) return;
+
         net.runelite.api.ModelData[] parts = new net.runelite.api.ModelData[modelIds.length];
         for (int i = 0; i < modelIds.length; i++) parts[i] = client.loadModelData(modelIds[i]);
 
         net.runelite.api.ModelData mergedData = client.mergeModels(parts);
 
-        // Z-INDEX FIX: Lift him higher in the water (-200)
-        if (npcId == NPC_GILES_WATER)
+        // Apply basic colors (Essential for kits to be visible)
+        short[] replace = config.getColorToReplace();
+        short[] replaceWith = config.getColorToReplaceWith();
+        if (replace != null && replaceWith != null)
         {
-            mergedData.translate(0, -200, 0);
+            for (int i = 0; i < replace.length && i < replaceWith.length; ++i)
+            {
+                mergedData.recolor(replace[i], replaceWith[i]);
+            }
         }
 
         rlo.setModel(mergedData.light(64, 850, -30, -50, -30));
