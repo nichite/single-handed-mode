@@ -299,4 +299,51 @@ public interface SingleHandedModeConfig extends Config
 	section = sectionEconomy
 	)
 	default int accumulatedDebt() { return 0; }
+
+	@ConfigSection(
+			name = "Overlays and Infoboxes",
+			description = "Settings for showing overlays and infoboxes on screen.",
+			position = 50
+	)
+	String sectionOverlays = "sectionOverlays";
+	@ConfigItem(
+			keyName = "showDurabilityInfobox",
+			name = "Show Durability Timer",
+			description = "Show the time remaining until the hook breaks.",
+			position = 56,
+			section = sectionOverlays
+	)
+	default boolean showDurabilityInfobox() { return true; }
+
+	@ConfigItem(
+			keyName = "showCostInfobox",
+			name = "Show Repair Cost",
+			description = "Show the accrued repair cost/debt.",
+			position = 57,
+			section = sectionOverlays
+	)
+	default boolean showCostInfobox() { return true; }
+
+	@ConfigItem(
+			keyName = "showStatsPanel",
+			name = "Show Insurance Stats",
+			description = "Show a detailed panel with coverage time and lifetime stats.",
+			position = 58,
+			section = sectionOverlays
+	)
+	default boolean showStatsPanel() { return false; } // Default off to avoid clutter
+
+	@ConfigItem(
+			keyName = "lifetimeWorn",
+			name = "Lifetime Worn",
+			description = "",
+			hidden = true)
+	default long lifetimeWorn() { return 0; }
+
+	@ConfigItem(
+			keyName = "lifetimePaid",
+			name = "Lifetime Paid",
+			description = "",
+			hidden = true)
+	default long lifetimePaid() { return 0; }
 }

@@ -63,6 +63,12 @@ public class SingleHandedModePlugin extends Plugin
     private DurabilityManager durabilityManager;
 
     @Inject
+    private SingleHandedModeInfoBoxManager infoBoxManager;
+
+    @Inject
+    private DurabilityStatsOverlay statsOverlay;
+
+    @Inject
     private InsuranceAgentManager agentManager;
 
     @Inject
@@ -76,6 +82,10 @@ public class SingleHandedModePlugin extends Plugin
     {
         overlayManager.add(insuranceAgentOverlay);
         updateOverlayState();
+
+        infoBoxManager.startUp(this);
+        overlayManager.add(statsOverlay);
+
         eventBus.register(doctorInteractionManager);
         eventBus.register(insuranceAgentManager);
     }
@@ -86,6 +96,11 @@ public class SingleHandedModePlugin extends Plugin
         overlayManager.remove(shieldOverlay);
         overlayManager.remove(brokenHookOverlay);
         overlayManager.remove(insuranceAgentOverlay);
+        overlayManager.remove(statsOverlay);
+
+        infoBoxManager.shutDown();
+        durabilityManager.shutDown();
+
         eventBus.unregister(doctorInteractionManager);
         eventBus.unregister(insuranceAgentManager);
     }
@@ -133,6 +148,8 @@ public class SingleHandedModePlugin extends Plugin
 
         ableismGenerator.maybeGenerateAbleistNpcComment(hookState.isWearingFunctionalHook());
         updateOverlayState();
+
+        infoBoxManager.onGameTick();
     }
 
     @Subscribe

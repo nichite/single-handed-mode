@@ -3,9 +3,11 @@ package com.singlehandedmode;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
+import net.runelite.api.Constants;
 import net.runelite.client.config.ConfigManager;
 
 @Singleton
@@ -13,16 +15,22 @@ import net.runelite.client.config.ConfigManager;
 public class DurabilityManager
 {
     private final int TICKS_PER_SAVE = 16;
-
     private final Client client;
     private final ConfigManager configManager;
     private final SingleHandedModeConfig config;
     private final HookStateManager hookState;
 
+    @Getter
     private int wearTicks;
     private int penaltyDebt;
-
     private boolean isBroken = false;
+    private long lastTickMillis = 0;
+
+    // Lifetime stats
+    @Getter
+    private long lifetimeWorn;
+    @Getter
+    private long lifetimePaid;
 
     @Inject
     public DurabilityManager(Client client, ConfigManager configManager, SingleHandedModeConfig config, HookStateManager hookState)
@@ -33,77 +41,99 @@ public class DurabilityManager
         this.hookState = hookState;
 
         // Load initial state
-        log.debug("Initial state: wearTicks = {}", wearTicks);
         this.wearTicks = config.currentWearTicks();
         this.penaltyDebt = config.accumulatedDebt();
-        this.isBroken = wearTicks > config.hookDurabilityTicks();
+        this.isBroken = wearTicks >= config.hookDurabilityTicks();
+        this.lifetimeWorn = config.lifetimeWorn();
+        this.lifetimePaid = config.lifetimePaid();
     }
 
     public void onGameTick()
     {
-//        if (!hookState.isPiratesHookEquipped()) return;
+        lastTickMillis = System.currentTimeMillis();
 
-        if (hookState.isWearingFunctionalHook())
+        if (hookState.isPiratesHookEquipped())
         {
-            // NORMAL WEAR
             ++wearTicks;
-            checkBrokenState();
-//            log.debug("Wear ticks: {}", wearTicks);
-            if (wearTicks % TICKS_PER_SAVE == 0)
-            {
-                saveProgress();
-
+            ++lifetimeWorn;
+            if (isBroken) {
+                double increase = config.penaltyPerSecond() * 0.6;
+                penaltyDebt += (int) Math.ceil(increase);
+            } else {
+                checkBrokenState();
             }
+            if (client.getTickCount() % TICKS_PER_SAVE == 0) saveProgress();
         }
-        else if (hookState.isPiratesHookEquipped())
+    }
+
+    public void shutDown()
+    {
+        saveProgress();
+    }
+
+    public String getSmoothTimeRemaining()
+    {
+        // 1. Calculate base remaining time in milliseconds
+        // (wearTicks are "past", so we subtract them from max)
+        long ticksRemaining = Math.max(0, config.hookDurabilityTicks() - wearTicks);
+        long baseMillisRemaining = ticksRemaining * Constants.GAME_TICK_LENGTH; // 600ms per tick
+
+        // 2. Subtract time elapsed since the last tick (Interpolation)
+        // This makes the timer count down smoothly between ticks
+        long timeSinceLastTick = System.currentTimeMillis() - lastTickMillis;
+
+        // Clamp: Don't let it go below 0 or subtract more than one tick's worth (to prevent jitter)
+        if (timeSinceLastTick > Constants.GAME_TICK_LENGTH)
         {
-            // BROKEN & EQUIPPED -> PENALTY PHASE
-            // We are broken, but the player hasn't unequipped it yet.
-            // Tick up the debt!
-
-            // Formula: Config GP/Sec divided by ticks/sec (0.6s per tick? No, 1 sec = 1.66 ticks).
-            // Simpler: Add (ConfigVal / 1.6) roughly, or just do it every second.
-            // Let's just track ticks and apply math periodically to avoid float errors.
-            // Or simpler: Config is "GP Per Tick" internally?
-            // Let's assume Config is "GP Per Second".
-            // 1 Tick = 0.6 seconds. So add (0.6 * GP_PER_SEC).
-            ++wearTicks;
-            double increase = config.penaltyPerSecond() * 0.6;
-            penaltyDebt += (int) Math.ceil(increase);
-
-            // Notify player periodically of their rising debt (every ~10 seconds)
-            if (client.getTickCount() % TICKS_PER_SAVE == 0)
-            {
-                // We don't save every tick to save disk I/O, but maybe every few seconds
-                saveProgress();
-            }
-        } else if (!isBroken) {
-//            log.debug("Not broken but not equipped. Wear ticks: {}", wearTicks);
-        } else {
-//            log.debug("Broken and not equipped. Wear ticks: {}", wearTicks);
+            timeSinceLastTick = Constants.GAME_TICK_LENGTH;
         }
 
+        long smoothMillis = baseMillisRemaining - timeSinceLastTick;
+
+        if (smoothMillis <= 0) return "00:00";
+
+        // 3. Format nicely
+        long totalSeconds = smoothMillis / 1000;
+        long hours = totalSeconds / 3600;
+        long remainder = totalSeconds % 3600;
+        long mins = remainder / 60;
+        long secs = remainder % 60;
+
+        if (hours > 0)
+        {
+            return String.format("%d:%02d:%02d", hours, mins, secs);
+        }
+
+        return String.format("%02d:%02d", mins, secs);
     }
 
-    public boolean isHookBroken()
+    // --- Data Accessors for UI ---
+
+    public int getCurrentDurability() { return Math.max(0, config.hookDurabilityTicks() - wearTicks); }
+    public boolean isHookBroken() { return isBroken; }
+    public boolean hasUnpaidDebt() { return penaltyDebt > 0; }
+    public int getTotalRepairCost() { return penaltyDebt; }
+
+    public int getAccruedCost()
     {
-        return isBroken;
+        if (hasUnpaidDebt()) return penaltyDebt;
+
+        double maxTicks = (double) config.hookDurabilityTicks();
+        if (maxTicks == 0) return 0;
+
+        double percentWorn = (double) wearTicks / maxTicks;
+        if (percentWorn > 1.0) percentWorn = 1.0;
+
+        return (int) (percentWorn * config.repairCost());
     }
 
-    public int getTotalRepairCost()
-    {
-        return penaltyDebt;
-    }
-
-    public boolean hasUnpaidDebt() {
-        return penaltyDebt > 0;
-    }
+    // --- Actions ---
 
     public void settleDebt() {
+        lifetimePaid += penaltyDebt;
         penaltyDebt = 0;
         saveProgress();
-        client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
-                "<col=00ff00>Payment accepted. Your medical debt has been cleared...for now.", null);
+        client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=00ff00>Payment accepted. Debt cleared.", null);
     }
 
     public void repairHook()
@@ -111,32 +141,26 @@ public class DurabilityManager
         wearTicks = 0;
         isBroken = false;
         saveProgress();
-        client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
-                "<col=00ff00>Your pirate's hook has been repaired!", null);
+        client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=00ff00>Your pirate's hook has been repaired!", null);
     }
 
     private void checkBrokenState()
     {
-        boolean newBrokenState = wearTicks >= config.hookDurabilityTicks();;
+        boolean newBrokenState = wearTicks >= config.hookDurabilityTicks();
         if (newBrokenState && !isBroken)
         {
-            // Just broke this tick
-            client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
-                    "<col=ff0000>Your pirate's hook has broken!", null);
-            client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
-                    "<col=ff0000>You must pay your insurance deductible (Drop " + config.repairCost() + " gp) to fix it.", null);
-
+            client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ff0000>Your pirate's hook has broken!", null);
             penaltyDebt += config.repairCost();
             saveProgress();
         }
-
         isBroken = newBrokenState;
     }
 
     private void saveProgress()
     {
-        log.debug("Saving hook durability: wear ticks: " + wearTicks + ", penalty debt: " + penaltyDebt);
         configManager.setConfiguration(SingleHandedModeConfig.GROUP, "currentWearTicks", wearTicks);
         configManager.setConfiguration(SingleHandedModeConfig.GROUP, "accumulatedDebt", penaltyDebt);
+        configManager.setConfiguration(SingleHandedModeConfig.GROUP, "lifetimeWorn", lifetimeWorn);
+        configManager.setConfiguration(SingleHandedModeConfig.GROUP, "lifetimePaid", lifetimePaid);
     }
 }
