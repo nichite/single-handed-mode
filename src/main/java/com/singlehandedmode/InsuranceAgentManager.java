@@ -1,6 +1,9 @@
 package com.singlehandedmode;
 
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Random;
+import java.util.Set;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.Getter;
@@ -20,36 +23,53 @@ public class InsuranceAgentManager
     private final Client client;
     private final DurabilityManager durabilityManager;
     private final PaymentHandler paymentHandler;
-    private final AgentPathFinder pathFinder;
+    private final AgentPathFinder agentPathFinder;
 
-    // The "Body" of the agent
     @Getter
-    final private InsuranceAgent agent;
+    private final InsuranceAgent agent;
 
     @Getter
     private String overheadText = null;
     private int textExpiryTick = -1;
     private final Random random = new Random();
 
-    // CONSTANTS
-    private static final int ANIM_IDLE = 808;
-    private static final int ANIM_WALK = 819;
+    // --- ID CONSTANTS ---
+    private static final int NPC_GILES_LAND = 5438;
+    private static final int ANIM_LAND_IDLE = 808;
+    private static final int ANIM_LAND_WALK = 819;
+
+    // UNDERWATER
+    private static final int NPC_GILES_WATER = 5441; // Correct Diving Gear ID
+
+    // Use 772 (Treading Water) for BOTH idle and move to prevent sliding.
+    private static final int ANIM_WATER_IDLE = 772;
+    private static final int ANIM_WATER_MOVE = 772;
+
     private static final int ANIM_WAVE = 863;
     private static final int ANIM_CRY = 860;
 
-    // DEPARTURE STATE
+    // REGIONS
+    private static final Set<Integer> UNDERWATER_REGIONS = new HashSet<>(Arrays.asList(
+            15008, // Fossil Island Underwater (North)
+            15264, // Fossil Island Underwater (South)
+            11924, // Mogre Camp
+            13194  // Coral nursery
+    ));
+
+    // STATE
+    private boolean isUnderwater = false;
+    private boolean needsRespawn = false;
     private boolean isLeaving = false;
     private int departureTick = -1;
-    private boolean needsRespawn = false;
 
     @Inject
     public InsuranceAgentManager(Client client, DurabilityManager durabilityManager,
-                                 PaymentHandler paymentHandler, AgentPathFinder pathFinder)
+                                 PaymentHandler paymentHandler, AgentPathFinder agentPathFinder)
     {
         this.client = client;
         this.durabilityManager = durabilityManager;
         this.paymentHandler = paymentHandler;
-        this.pathFinder = pathFinder;
+        this.agentPathFinder = agentPathFinder;
         this.agent = new InsuranceAgent(client);
     }
 
@@ -62,29 +82,35 @@ public class InsuranceAgentManager
         }
     }
 
-    // --- MAIN LOGIC LOOP (Game Tick) ---
+    @Subscribe
+    public void onClientTick(ClientTick event)
+    {
+        if (agent != null)
+        {
+            agent.render();
+        }
+    }
+
     public void onGameTick()
     {
-        // 1. Cleanup
         if (textExpiryTick != -1 && client.getTickCount() > textExpiryTick) {
             overheadText = null; textExpiryTick = -1;
         }
 
-        // 2. Teleport / Region Load Check
+        checkBiome();
+
         if (needsRespawn && client.getGameState() == GameState.LOGGED_IN)
         {
             agent.despawn();
             needsRespawn = false;
         }
 
-        // 3. Departure Sequence
         if (isLeaving)
         {
             handleDepartureSequence();
             return;
         }
 
-        // 4. Debt Status Check
         if (!durabilityManager.hasUnpaidDebt())
         {
             if (agent.isActive()) startDepartureSequence();
@@ -92,19 +118,26 @@ public class InsuranceAgentManager
             return;
         }
 
-        // 5. Behavior Logic
         runAgentBehavior();
     }
 
-    // --- RENDER LOOP (Client Tick) ---
-    @Subscribe
-    public void onClientTick(ClientTick event)
+    private void checkBiome()
     {
-        // Delegate rendering to the entity class
-        agent.render();
-    }
+        WorldPoint wp = client.getLocalPlayer().getWorldLocation();
+        if (wp == null) return;
 
-    // --- PRIVATE LOGIC ---
+        boolean nowUnderwater = UNDERWATER_REGIONS.contains(wp.getRegionID());
+
+        if (nowUnderwater != isUnderwater)
+        {
+            isUnderwater = nowUnderwater;
+            // Force respawn to swap model immediately
+            if (agent.isActive())
+            {
+                agent.despawn();
+            }
+        }
+    }
 
     private void runAgentBehavior()
     {
@@ -115,14 +148,19 @@ public class InsuranceAgentManager
         if (paymentHandler.isTrackingPayment()) mutterAboutNumbers();
         else maybeTalk();
 
-        // 1. Initialize if missing
+        // 1. DETERMINE VISUALS
+        int currentNpcId = isUnderwater ? NPC_GILES_WATER : NPC_GILES_LAND;
+        int currentIdleAnim = isUnderwater ? ANIM_WATER_IDLE : ANIM_LAND_IDLE;
+        int currentWalkAnim = isUnderwater ? ANIM_WATER_MOVE : ANIM_LAND_WALK;
+
+        // 2. SPAWN
         if (!agent.isActive() || agent.getCurrentPos() == null)
         {
             WorldPoint spawnPos = new WorldPoint(goal.getX() - 1, goal.getY(), goal.getPlane());
-            agent.spawn(spawnPos);
+            agent.spawn(spawnPos, currentNpcId);
         }
 
-        // 2. Off-Map Snap (If agent is in a different scene context)
+        // 3. SNAP (Scene Safety)
         if (LocalPoint.fromWorld(client, agent.getCurrentPos()) == null)
         {
             WorldPoint snapPos = new WorldPoint(goal.getX() - 1, goal.getY(), goal.getPlane());
@@ -130,37 +168,36 @@ public class InsuranceAgentManager
             return;
         }
 
-        // 3. Distance Check (Teleport if too far)
+        // 4. TELEPORT (Distance Safety)
         if (agent.getCurrentPos().distanceTo(goal) > 15 || agent.getCurrentPos().getPlane() != goal.getPlane())
         {
-            // Re-spawn to handle scene boundaries safely
             WorldPoint newPos = new WorldPoint(goal.getX() - 1, goal.getY(), goal.getPlane());
             agent.despawn();
-            agent.spawn(newPos);
+            agent.spawn(newPos, currentNpcId);
             return;
         }
 
-        // 4. Pathfinding
+        // 5. MOVEMENT
         int distance = agent.getCurrentPos().distanceTo(goal);
 
         if (distance > 1)
         {
-            WorldPoint nextStep = pathFinder.findNextStep(agent.getCurrentPos(), goal);
+            WorldPoint nextStep = agentPathFinder.findNextStep(agent.getCurrentPos(), goal);
             if (nextStep != null)
             {
                 agent.moveTo(nextStep);
-                agent.setAnimation(ANIM_WALK);
+                agent.setAnimation(currentWalkAnim);
                 agent.faceTarget(goal);
             }
             else
             {
-                agent.setAnimation(ANIM_IDLE);
+                agent.setAnimation(currentIdleAnim);
                 agent.faceTarget(goal);
             }
         }
         else
         {
-            agent.setAnimation(ANIM_IDLE);
+            agent.setAnimation(currentIdleAnim);
             agent.faceTarget(goal);
         }
     }
@@ -186,8 +223,6 @@ public class InsuranceAgentManager
             isLeaving = false;
         }
     }
-
-    // --- UTILS ---
 
     public void say(String text, int durationTicks)
     {

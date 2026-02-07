@@ -1,16 +1,16 @@
 package com.singlehandedmode;
 
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.Constants;
 import net.runelite.api.RuneLiteObject;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
 
-/**
- * Handles the visual representation of the agent:
- * Model loading, Rendering, and Interpolation.
- */
+import java.util.Arrays;
+
+@Slf4j
 public class InsuranceAgent
 {
     private final Client client;
@@ -18,9 +18,9 @@ public class InsuranceAgent
     @Getter
     private RuneLiteObject rlo;
 
-    private static final int GILES_NPC_ID = 5438;
+    // Constant for the water check
+    private static final int NPC_GILES_WATER = 5441;
 
-    // Position Tracking
     @Getter private WorldPoint currentPos;
     @Getter private WorldPoint previousPos;
     private long lastTickTime;
@@ -32,15 +32,15 @@ public class InsuranceAgent
         this.client = client;
     }
 
-    public void spawn(WorldPoint location)
+    public void spawn(WorldPoint location, int npcId)
     {
-        despawn(); // Safety cleanup
-
+        despawn();
         rlo = client.createRuneLiteObject();
-        loadModel(GILES_NPC_ID);
+
+        loadModel(npcId);
+
         rlo.setShouldLoop(true);
         rlo.setActive(true);
-
         snapTo(location);
     }
 
@@ -60,21 +60,22 @@ public class InsuranceAgent
         return rlo != null && rlo.isActive();
     }
 
-    /**
-     * Moves the agent logically to a new tile.
-     * The renderer will interpolate towards this tile over the next tick.
-     */
     public void moveTo(WorldPoint newPos)
     {
         if (rlo == null) return;
+
+        // If we have no history, snap instead of sliding
+        if (currentPos == null)
+        {
+            snapTo(newPos);
+            return;
+        }
+
         previousPos = currentPos;
         currentPos = newPos;
         lastTickTime = System.currentTimeMillis();
     }
 
-    /**
-     * Instantly moves the agent without interpolation (Teleport).
-     */
     public void snapTo(WorldPoint newPos)
     {
         if (rlo == null) return;
@@ -112,10 +113,6 @@ public class InsuranceAgent
         rlo.setOrientation(jagexOri);
     }
 
-    /**
-     * Updates the visual location of the model (Interpolation).
-     * Call this on ClientTick.
-     */
     public void render()
     {
         if (rlo == null || !rlo.isActive() || previousPos == null || currentPos == null) return;
@@ -123,8 +120,6 @@ public class InsuranceAgent
         LocalPoint startLp = LocalPoint.fromWorld(client, previousPos);
         LocalPoint endLp = LocalPoint.fromWorld(client, currentPos);
 
-        // If off-map or scene changed, we can't interpolate.
-        // Snap to current if possible.
         if (startLp == null || endLp == null)
         {
             if (endLp != null) rlo.setLocation(endLp, currentPos.getPlane());
@@ -141,6 +136,7 @@ public class InsuranceAgent
         rlo.setLocation(new LocalPoint(x, y), currentPos.getPlane());
     }
 
+    // TODO: fix missing legs
     private void loadModel(int npcId)
     {
         net.runelite.api.NPCComposition config = client.getNpcDefinition(npcId);
@@ -151,6 +147,13 @@ public class InsuranceAgent
         for (int i = 0; i < modelIds.length; i++) parts[i] = client.loadModelData(modelIds[i]);
 
         net.runelite.api.ModelData mergedData = client.mergeModels(parts);
+
+        // Z-INDEX FIX: Lift him higher in the water (-200)
+        if (npcId == NPC_GILES_WATER)
+        {
+            mergedData.translate(0, -200, 0);
+        }
+
         rlo.setModel(mergedData.light(64, 850, -30, -50, -30));
     }
 }

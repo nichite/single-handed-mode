@@ -94,7 +94,7 @@ public class InteractionRestrictionManager
 
         // Generic climbing checks, separated to handle ladders and ropes.
         // Stairs always allowed.
-        if (option.contains("climb") && !target.contains("stair"))
+        if (option.contains("climb") && !(target.contains("stair") || target.contains("steps")))
         {
             log.debug("option contains climb");
             if (target.contains("ladder"))
