@@ -3,12 +3,10 @@ package com.singlehandedmode;
 import com.google.inject.Provides;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.Client;
 import net.runelite.api.events.*;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
-import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -20,18 +18,11 @@ import net.runelite.client.ui.overlay.OverlayManager;
 public class SingleHandedModePlugin extends Plugin
 {
     @Inject
-    private Client client;
-
-    @Inject
     private EventBus eventBus;
-
-    @Inject
-    private SingleHandedModeConfig config;
 
     @Inject
     private OverlayManager overlayManager;
 
-    // --- LOGIC MODULES ---
     @Inject
     private HookStateManager hookState;
 
@@ -80,11 +71,12 @@ public class SingleHandedModePlugin extends Plugin
     @Override
     protected void startUp() throws Exception
     {
+        overlayManager.add(shieldOverlay);
+        overlayManager.add(brokenHookOverlay);
         overlayManager.add(insuranceAgentOverlay);
-        updateOverlayState();
+        overlayManager.add(statsOverlay);
 
         infoBoxManager.startUp(this);
-        overlayManager.add(statsOverlay);
 
         eventBus.register(doctorInteractionManager);
         eventBus.register(insuranceAgentManager);
@@ -106,50 +98,14 @@ public class SingleHandedModePlugin extends Plugin
     }
 
     @Subscribe
-    public void onConfigChanged(ConfigChanged event)
-    {
-        // filter by our group "singlehandedmode"
-        if (!event.getGroup().equals("singlehandedmode")) return;
-
-        // Check if the specific key for shields changed
-        if (event.getKey().equals("disableShieldsNoHook"))
-        {
-            updateOverlayState();
-        }
-    }
-
-    /**
-     * Adds or removes the overlay based on the current config state.
-     */
-    private void updateOverlayState()
-    {
-        // Safe Pattern: Remove it first to ensure we don't duplicate it.
-        // OverlayManager.remove() is safe to call even if it's not currently added.
-        overlayManager.remove(shieldOverlay);
-        overlayManager.remove(brokenHookOverlay);
-
-        // Only add it back if the restriction is enabled
-        if (config.disableShieldsNoHook())
-        {
-            overlayManager.add(shieldOverlay);
-        }
-
-        if (durabilityManager.isHookBroken()) {
-            overlayManager.add(brokenHookOverlay);
-        }
-    }
-
-    @Subscribe
     public void onGameTick(GameTick event)
     {
         durabilityManager.onGameTick();
         hookState.onGameTick();
         agentManager.onGameTick();
+        infoBoxManager.onGameTick();
 
         ableismGenerator.maybeGenerateAbleistNpcComment(hookState.isWearingFunctionalHook());
-        updateOverlayState();
-
-        infoBoxManager.onGameTick();
     }
 
     @Subscribe
